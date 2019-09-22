@@ -1,0 +1,20 @@
+[package]
+name = "sortnetopt"
+version = "0.1.0"
+authors = ["Jannis Harder <me@jix.one>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[profile.release]
+debug = true # Enables profiling
+
+[profile.bench]
+debug = true # Enables profiling
+
+[dependencies]
+log = "0.4.8"
+env_logger = "0.6.2"
+better-panic = "0.2.0"
+jemallocator = "0.3.2"
+structopt = "0.3.2"
