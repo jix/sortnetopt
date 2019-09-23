@@ -3,7 +3,7 @@ static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 use structopt::StructOpt;
 
-use sortnetopt::logging;
+use sortnetopt::{logging, output_set::MAX_CHANNELS};
 
 #[derive(Debug, StructOpt)]
 struct Opt {
@@ -35,5 +35,6 @@ fn main() {
 }
 
 fn cmd_search(opt: OptSearch) {
+    assert!(opt.channels <= MAX_CHANNELS);
     log::info!("options: {:?}", opt);
 }

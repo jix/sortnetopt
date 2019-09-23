@@ -1,21 +1,60 @@
-use std::{iter::repeat, mem::replace};
+use std::{
+    cmp::Ordering,
+    hash::{Hash, Hasher},
+    iter::repeat,
+    mem::replace,
+};
 
 use arrayvec::ArrayVec;
+use rustc_hash::FxHasher;
 
 pub const MAX_CHANNELS: usize = 11;
 
 pub type CVec<T> = ArrayVec<[T; MAX_CHANNELS]>;
 pub type WVec<T> = ArrayVec<[T; MAX_CHANNELS + 1]>;
 
-#[derive(Copy, Clone)]
+mod canon;
+
+#[derive(Copy, Clone, Debug)]
 pub struct OutputSet<Bitmap = Vec<bool>> {
     channels: usize,
     bitmap: Bitmap,
 }
 
+impl<BitmapA, BitmapB> PartialEq<OutputSet<BitmapB>> for OutputSet<BitmapA>
+where
+    BitmapA: AsRef<[bool]>,
+    BitmapB: AsRef<[bool]>,
+{
+    fn eq(&self, other: &OutputSet<BitmapB>) -> bool {
+        self.bitmap() == other.bitmap()
+    }
+}
+
+impl<Bitmap> Eq for OutputSet<Bitmap> where Bitmap: AsRef<[bool]> {}
+
+impl<BitmapA, BitmapB> PartialOrd<OutputSet<BitmapB>> for OutputSet<BitmapA>
+where
+    BitmapA: AsRef<[bool]>,
+    BitmapB: AsRef<[bool]>,
+{
+    fn partial_cmp(&self, other: &OutputSet<BitmapB>) -> Option<Ordering> {
+        Some(self.bitmap().cmp(other.bitmap()))
+    }
+}
+
+impl<Bitmap> Ord for OutputSet<Bitmap>
+where
+    Bitmap: AsRef<[bool]>,
+{
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
 impl OutputSet {
     pub fn all_values(channels: usize) -> Self {
-        assert!(channels <= MAX_CHANNELS);
+        debug_assert!(channels <= MAX_CHANNELS);
         Self {
             channels,
             bitmap: vec![true; 1 << channels],
@@ -27,9 +66,13 @@ impl<Bitmap> OutputSet<Bitmap>
 where
     Bitmap: AsRef<[bool]>,
 {
+    pub fn channels(&self) -> usize {
+        self.channels
+    }
+
     pub fn from_bitmap(channels: usize, bitmap: Bitmap) -> Self {
-        assert!(channels <= MAX_CHANNELS);
-        assert_eq!(bitmap.as_ref().len(), 1 << channels);
+        debug_assert!(channels <= MAX_CHANNELS);
+        debug_assert_eq!(bitmap.as_ref().len(), 1 << channels);
         Self { channels, bitmap }
     }
 
@@ -41,11 +84,18 @@ where
         self.bitmap.as_ref()
     }
 
-    pub fn bitmap_mut(&mut self) -> &mut [bool]
-    where
-        Bitmap: AsMut<[bool]>,
-    {
-        self.bitmap.as_mut()
+    pub fn as_ref(&self) -> OutputSet<&[bool]> {
+        OutputSet {
+            channels: self.channels,
+            bitmap: self.bitmap(),
+        }
+    }
+
+    pub fn to_owned(&self) -> OutputSet<Vec<bool>> {
+        OutputSet {
+            channels: self.channels,
+            bitmap: self.bitmap().to_owned(),
+        }
     }
 
     pub fn weight_histogram(&self) -> WVec<usize> {
@@ -74,13 +124,65 @@ where
         true
     }
 
-    pub fn apply_comparator(&mut self, channels: [usize; 2])
-    where
-        Bitmap: AsMut<[bool]>,
-    {
-        assert_ne!(channels[0], channels[1]);
-        assert!(channels[0] < self.channels);
-        assert!(channels[1] < self.channels);
+    pub fn channel_fingerprint(&self, channel: usize) -> u64 {
+        let bitmap = self.bitmap();
+        let all_mask = bitmap.len() - 1;
+        let mask = 1 << channel;
+        let mut fingerprint = 0;
+        fingerprint += bitmap[mask] as u64;
+        fingerprint += bitmap[mask ^ all_mask] as u64 * 2;
+
+        let mut index = mask;
+        let size = bitmap.len();
+
+        while index < size {
+            fingerprint += bitmap[index] as u64 * 4;
+            index = (index + 1) | mask;
+        }
+
+        fingerprint
+    }
+
+    pub fn low_channels_fingerprint(&self, low_channels: usize, buffer: &mut Vec<usize>) -> u64 {
+        let weights = self.channels() + 1 - low_channels;
+        let low_indices = 1 << low_channels;
+
+        let low_mask = low_indices - 1;
+
+        buffer.clear();
+        buffer.resize(weights * low_indices, 0);
+
+        for (index, &present) in self.bitmap().iter().enumerate() {
+            let low_index = index & low_mask;
+            let high_weight = (index & !low_mask).count_ones() as usize;
+            buffer[high_weight + weights * low_index] += present as usize;
+        }
+
+        let mut hasher = FxHasher::default();
+        buffer.hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+impl<Bitmap> OutputSet<Bitmap>
+where
+    Bitmap: AsMut<[bool]> + AsRef<[bool]>,
+{
+    pub fn as_mut(&mut self) -> OutputSet<&mut [bool]> {
+        OutputSet {
+            channels: self.channels,
+            bitmap: self.bitmap_mut(),
+        }
+    }
+
+    pub fn bitmap_mut(&mut self) -> &mut [bool] {
+        self.bitmap.as_mut()
+    }
+
+    pub fn apply_comparator(&mut self, channels: [usize; 2]) {
+        debug_assert_ne!(channels[0], channels[1]);
+        debug_assert!(channels[0] < self.channels);
+        debug_assert!(channels[1] < self.channels);
 
         let mask_0 = 1 << channels[0];
         let mask_1 = 1 << channels[1];
@@ -89,7 +191,7 @@ where
 
         let mut index = comparator_mask;
 
-        let bitmap = self.bitmap.as_mut();
+        let bitmap = self.bitmap_mut();
 
         let size = bitmap.len();
 
@@ -97,6 +199,63 @@ where
             let out_of_order = replace(&mut bitmap[index ^ mask_0], false);
             bitmap[index ^ mask_1] |= out_of_order;
             index = (index + 1) | comparator_mask;
+        }
+    }
+
+    pub fn swap_channels(&mut self, channels: [usize; 2]) {
+        debug_assert!(channels[0] < self.channels);
+        debug_assert!(channels[1] < self.channels);
+        if channels[0] == channels[1] {
+            return;
+        }
+
+        let mask_0 = 1 << channels[0];
+        let mask_1 = 1 << channels[1];
+
+        let comparator_mask = mask_0 | mask_1;
+
+        let mut index = comparator_mask;
+
+        let bitmap = self.bitmap_mut();
+
+        let size = bitmap.len();
+
+        while index < size {
+            bitmap.swap(index ^ mask_0, index ^ mask_1);
+            index = (index + 1) | comparator_mask;
+        }
+    }
+
+    pub fn invert(&mut self) {
+        self.bitmap_mut().reverse()
+    }
+
+    pub fn canonicalize(&mut self) -> Perm {
+        if self.channels() == 0 {
+            return Perm::identity(0);
+        }
+
+        let mut canonicalize = canon::Canonicalize::new(self.as_ref());
+
+        let (result, perm) = canonicalize.canonicalize();
+
+        self.bitmap_mut().copy_from_slice(result.bitmap());
+
+        perm
+    }
+}
+
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub struct Perm {
+    pub invert: bool,
+    pub perm: CVec<usize>,
+}
+
+impl Perm {
+    fn identity(channels: usize) -> Self {
+        Self {
+            invert: false,
+            perm: (0..channels).collect(),
         }
     }
 }
@@ -134,5 +293,41 @@ mod test {
         }
 
         assert!(output_set.is_sorted());
+    }
+
+    #[test]
+    fn sort_canonicalize() {
+        crate::logging::setup(false);
+
+        for &limit in &[1, 4, 8, 16, 30] {
+            let mut output_set = OutputSet::all_values(11);
+            for (i, &comparator) in SORT_11.iter().enumerate() {
+                assert!(!output_set.is_sorted());
+                output_set.apply_comparator(comparator);
+                let mut canonical = output_set.clone();
+                canonical.canonicalize();
+
+                let mut canonical_2 = output_set.clone();
+
+                if i & 1 != 0 {
+                    canonical_2.invert();
+                }
+
+                for &pair in SORT_11[..limit].iter() {
+                    canonical_2.swap_channels(pair);
+                }
+                canonical_2.canonicalize();
+
+                assert_eq!(canonical, canonical_2);
+
+                log::info!(
+                    "step {}: histogram = {:?}",
+                    i,
+                    output_set.weight_histogram(),
+                );
+            }
+
+            assert!(output_set.is_sorted());
+        }
     }
 }
