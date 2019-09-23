@@ -1,4 +1,7 @@
-use std::{cmp::Reverse, mem::swap};
+use std::{
+    cmp::Reverse,
+    mem::{replace, swap},
+};
 
 use super::{CVec, OutputSet, Perm};
 
@@ -6,7 +9,7 @@ use super::{CVec, OutputSet, Perm};
 struct CandidateData {
     perm: Perm,
     fingerprint: CVec<u64>,
-    partition: CVec<(u16, u64)>,
+    partition: CVec<(u16, u16)>,
     partition_score: (usize, usize),
 }
 
@@ -18,11 +21,30 @@ impl CandidateData {
             self.fingerprint.as_ref(),
         )
     }
+
+    pub fn sort_partition(&mut self) {
+        self.partition
+            .sort_unstable_by_key(|&(part_mask, part_id)| {
+                (Reverse(part_mask.count_ones()), part_id, part_mask)
+            });
+
+        let singleton_count = self
+            .partition
+            .iter()
+            .rev()
+            .take_while(|&(part_mask, _)| part_mask & (part_mask - 1) == 0)
+            .count();
+
+        let max_partition_size = self.partition[0].0.count_ones() as usize;
+
+        self.partition_score = (singleton_count, !max_partition_size);
+    }
 }
 
 pub struct Canonicalize {
     bitmap_len: usize,
     channels: usize,
+    used_channels: usize,
     bitmaps: Vec<bool>,
     data: Vec<CandidateData>,
     free_list: Vec<usize>,
@@ -91,10 +113,11 @@ macro_rules! alloc {
 }
 
 impl Canonicalize {
-    pub fn new(output_set: OutputSet<&[bool]>) -> Self {
+    pub fn new(mut output_set: OutputSet<&mut [bool]>) -> Self {
         let mut new = Self {
             bitmap_len: 1 << output_set.channels(),
             channels: output_set.channels(),
+            used_channels: output_set.channels(),
             bitmaps: vec![],
             data: vec![],
             free_list: vec![],
@@ -111,6 +134,14 @@ impl Canonicalize {
             partition: CVec::new(),
             partition_score: Default::default(),
         };
+
+        for channel in (0..new.channels).rev() {
+            if output_set.is_channel_unconstrained(channel) {
+                new.used_channels -= 1;
+                output_set.swap_channels([channel, new.used_channels]);
+                data.perm.perm.swap(channel, new.used_channels);
+            }
+        }
 
         let identity = alloc!(new, output_set.as_ref(), data.clone());
         new.layer.push(identity);
@@ -129,19 +160,25 @@ impl Canonicalize {
 
     pub fn canonicalize(&mut self) -> (OutputSet<&[bool]>, Perm) {
         self.initialize_partitions();
-        self.prune_using_fingerprints();
 
         loop {
-            while self.move_singleton() {}
-            self.prune(true);
-            if self.fixed == self.channels {
+            self.prune_using_fingerprints();
+            let mut prune = false;
+            while self.move_singleton() {
+                prune = true;
+            }
+            if prune {
+                self.prune(true);
+            }
+            if self.fixed == self.used_channels {
                 break;
             }
             self.individualize();
             self.prune(false);
-            if self.fixed == self.channels {
+            if self.fixed == self.used_channels {
                 break;
             }
+            self.refine();
         }
 
         let index = self.layer[0];
@@ -151,44 +188,32 @@ impl Canonicalize {
     fn initialize_partitions(&mut self) {
         for &index in self.layer.iter() {
             let output_set = get!(self, index);
-            let mut fingerprints = (0..self.channels)
+            let mut fingerprints = (0..self.used_channels)
                 .map(|channel| (output_set.channel_fingerprint(channel), channel))
                 .collect::<CVec<_>>();
 
             fingerprints.sort_unstable();
 
             let mut part_fingerprint = fingerprints[0].0;
+            let mut part_id = 0;
             let mut part_mask = 0u16;
 
             let data = &mut self.data[index];
 
             for &(fingerprint, channel) in fingerprints.iter() {
                 if part_fingerprint != fingerprint {
-                    data.partition.push((part_mask, part_fingerprint));
+                    data.partition.push((part_mask, part_id));
                     part_mask = 0;
                     part_fingerprint = fingerprint;
+                    part_id += 1;
                 }
                 data.fingerprint.push(fingerprint);
                 part_mask |= 1 << channel;
             }
 
-            data.partition.push((part_mask, part_fingerprint));
+            data.partition.push((part_mask, part_id));
 
-            data.partition
-                .sort_unstable_by_key(|&(part_mask, part_fingerprint)| {
-                    (Reverse(part_mask.count_ones()), part_fingerprint, part_mask)
-                });
-
-            let singleton_count = data
-                .partition
-                .iter()
-                .rev()
-                .take_while(|&(part_mask, _)| part_mask & (part_mask - 1) == 0)
-                .count();
-
-            let max_partition_size = data.partition[0].0.count_ones() as usize;
-
-            data.partition_score = (singleton_count, self.channels - max_partition_size);
+            data.sort_partition();
         }
     }
 
@@ -233,7 +258,7 @@ impl Canonicalize {
                 let source_mask = 1 << source_channel;
                 let fixed_mask = 1 << self.fixed;
 
-                for (part, _fingerprint) in data.partition.iter_mut() {
+                for (part, _id) in data.partition.iter_mut() {
                     let fixed_present = *part & fixed_mask != 0;
 
                     *part = (*part & !fixed_mask) | (source_mask * fixed_present as u16);
@@ -252,7 +277,7 @@ impl Canonicalize {
         let reborrow = reborrow!(self);
         let free_list = &mut self.free_list;
 
-        if self.fixed == self.channels {
+        if self.fixed == self.used_channels {
             let min_output_set_index = *self
                 .layer
                 .iter()
@@ -340,7 +365,7 @@ impl Canonicalize {
                 let source_mask = 1 << source_channel;
                 let fixed_mask = 1 << self.fixed;
 
-                for (part, _fingerprint) in data.partition.iter_mut() {
+                for (part, _id) in data.partition.iter_mut() {
                     let fixed_present = *part & fixed_mask != 0;
 
                     *part = (*part & !fixed_mask) | (source_mask * fixed_present as u16);
@@ -356,5 +381,57 @@ impl Canonicalize {
         swap(&mut self.layer, &mut self.next_layer);
 
         self.fixed += 1;
+    }
+
+    fn refine(&mut self) {
+        for &index in self.layer.iter() {
+            let data = &mut self.data[index];
+            let output_set = get!(self, index);
+
+            data.fingerprint.clear();
+
+            let mut part_id = 0;
+
+            for (part, _id) in replace(&mut data.partition, CVec::new()) {
+                let mut part_iter = part;
+
+                let mut fingerprints = CVec::<(u64, usize)>::new();
+
+                while part_iter != 0 {
+                    let channel = part_iter.trailing_zeros() as usize;
+                    part_iter = part_iter & (part_iter - 1);
+                    fingerprints.push((
+                        output_set.low_channels_channel_fingerprint(
+                            self.fixed,
+                            channel,
+                            &mut self.buffer,
+                        ),
+                        channel,
+                    ));
+                }
+
+                fingerprints.sort_unstable();
+
+                let mut part_fingerprint = fingerprints[0].0;
+                let mut part_mask = 0u16;
+
+                for &(fingerprint, channel) in fingerprints.iter() {
+                    if part_fingerprint != fingerprint {
+                        data.partition.push((part_mask, part_id));
+                        part_mask = 0;
+                        part_fingerprint = fingerprint;
+                        part_id += 1;
+                    }
+                    data.fingerprint.push(fingerprint);
+                    part_mask |= 1 << channel;
+                }
+
+                data.partition.push((part_mask, part_id));
+
+                part_id += 1;
+            }
+
+            data.sort_partition();
+        }
     }
 }

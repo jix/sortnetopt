@@ -124,6 +124,23 @@ where
         true
     }
 
+    pub fn is_channel_unconstrained(&self, channel: usize) -> bool {
+        let bitmap = self.bitmap();
+        let mask = 1 << channel;
+
+        let mut index = mask;
+        let size = bitmap.len();
+
+        while index < size {
+            if bitmap[index] != bitmap[index ^ mask] {
+                return false;
+            }
+            index = (index + 1) | mask;
+        }
+
+        true
+    }
+
     pub fn channel_fingerprint(&self, channel: usize) -> u64 {
         let bitmap = self.bitmap();
         let all_mask = bitmap.len() - 1;
@@ -156,6 +173,39 @@ where
             let low_index = index & low_mask;
             let high_weight = (index & !low_mask).count_ones() as usize;
             buffer[high_weight + weights * low_index] += present as usize;
+        }
+
+        let mut hasher = FxHasher::default();
+        buffer.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    pub fn low_channels_channel_fingerprint(
+        &self,
+        low_channels: usize,
+        channel: usize,
+        buffer: &mut Vec<usize>,
+    ) -> u64 {
+        let bitmap = self.bitmap();
+        let weights = self.channels() - low_channels;
+        let low_indices = 1 << low_channels;
+
+        let mask = 1 << channel;
+
+        let low_mask = low_indices - 1;
+        let high_mask = !(low_mask | mask);
+
+        buffer.clear();
+        buffer.resize(weights * low_indices, 0);
+
+        let mut index = mask;
+        let size = bitmap.len();
+
+        while index < size {
+            let low_index = index & low_mask;
+            let high_weight = (index & high_mask).count_ones() as usize;
+            buffer[high_weight + weights * low_index] += bitmap[index] as usize;
+            index = (index + 1) | mask;
         }
 
         let mut hasher = FxHasher::default();
@@ -235,7 +285,7 @@ where
             return Perm::identity(0);
         }
 
-        let mut canonicalize = canon::Canonicalize::new(self.as_ref());
+        let mut canonicalize = canon::Canonicalize::new(self.as_mut());
 
         let (result, perm) = canonicalize.canonicalize();
 
