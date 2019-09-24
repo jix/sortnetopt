@@ -14,6 +14,7 @@ pub type CVec<T> = ArrayVec<[T; MAX_CHANNELS]>;
 pub type WVec<T> = ArrayVec<[T; MAX_CHANNELS + 1]>;
 
 mod canon;
+mod subsume;
 
 #[derive(Copy, Clone, Debug)]
 pub struct OutputSet<Bitmap = Vec<bool>> {
@@ -186,6 +187,8 @@ where
         channel: usize,
         buffer: &mut Vec<usize>,
     ) -> u64 {
+        debug_assert!(channel >= low_channels);
+
         let bitmap = self.bitmap();
         let weights = self.channels() - low_channels;
         let low_indices = 1 << low_channels;
@@ -211,6 +214,58 @@ where
         let mut hasher = FxHasher::default();
         buffer.hash(&mut hasher);
         hasher.finish()
+    }
+
+    pub fn low_channels_channel_abstraction_len(&self, low_channels: usize) -> usize {
+        let weights = self.channels() - low_channels;
+        let low_indices = 1 << low_channels;
+        weights * low_indices * 3
+    }
+
+    pub fn low_channels_channel_abstraction(
+        &self,
+        low_channels: usize,
+        channel: usize,
+        buffer: &mut [usize],
+    ) {
+        debug_assert!(channel >= low_channels);
+
+        let bitmap = self.bitmap();
+
+        let weights = self.channels() - low_channels;
+        let low_indices = 1 << low_channels;
+
+        let mask = 1 << channel;
+
+        buffer.iter_mut().for_each(|value| *value = 0);
+
+        let low_mask = low_indices - 1;
+        let high_mask = !(low_mask | mask);
+
+        let mut index = mask;
+        let size = bitmap.len();
+
+        while index < size {
+            let low_index = index & low_mask;
+            let high_weight = (index & high_mask).count_ones() as usize;
+            let value_hi = bitmap[index];
+            let value_lo = bitmap[index ^ mask];
+            buffer[0 + 3 * (high_weight + weights * low_index)] += value_lo as usize;
+            buffer[1 + 3 * (high_weight + weights * low_index)] += value_hi as usize;
+            buffer[2 + 3 * (high_weight + weights * low_index)] += (value_lo & value_hi) as usize;
+            index = (index + 1) | mask;
+        }
+    }
+
+    pub fn subsumes_unpermuted(&self, other: OutputSet<impl AsRef<[bool]>>) -> bool {
+        self.bitmap()
+            .iter()
+            .zip(other.bitmap().iter())
+            .all(|(&my_value, &other_value)| !my_value | other_value)
+    }
+
+    pub fn subsumes_permuted(&self, other: OutputSet<impl AsRef<[bool]>>) -> bool {
+        subsume::Subsume::new([self.to_owned(), other.to_owned()]).search()
     }
 }
 
@@ -377,6 +432,39 @@ mod test {
                 );
             }
 
+            assert!(output_set.is_sorted());
+        }
+    }
+
+    #[test]
+    fn sort_subsume_permuted() {
+        crate::logging::setup(false);
+
+        for &limit in &[1, 4, 8, 16, 30] {
+            let mut output_set = OutputSet::all_values(11);
+            for (i, &comparator) in SORT_11.iter().enumerate() {
+                assert!(!output_set.is_sorted());
+                let previous_output_set = output_set.clone();
+                output_set.apply_comparator(comparator);
+
+                let mut permuted = output_set.clone();
+
+                for &pair in SORT_11[..limit].iter() {
+                    permuted.swap_channels(pair);
+                }
+
+                assert!(permuted.subsumes_permuted(output_set.as_ref()));
+                assert!(output_set.subsumes_permuted(permuted.as_ref()));
+                assert!(!previous_output_set.subsumes_permuted(permuted.as_ref()));
+                let strict_progress = permuted.subsumes_permuted(previous_output_set.as_ref());
+
+                log::info!(
+                    "step {}: histogram = {:?} strict progress = {:?}",
+                    i,
+                    output_set.weight_histogram(),
+                    strict_progress
+                );
+            }
             assert!(output_set.is_sorted());
         }
     }
