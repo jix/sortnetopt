@@ -13,6 +13,8 @@ pub const MAX_CHANNELS: usize = 11;
 pub type CVec<T> = ArrayVec<[T; MAX_CHANNELS]>;
 pub type WVec<T> = ArrayVec<[T; MAX_CHANNELS + 1]>;
 
+pub mod packed_vec;
+
 mod canon;
 mod subsume;
 
@@ -267,6 +269,20 @@ where
     pub fn subsumes_permuted(&self, other: OutputSet<impl AsRef<[bool]>>) -> bool {
         subsume::Subsume::new([self.to_owned(), other.to_owned()]).search()
     }
+
+    pub fn packed_len(&self) -> usize {
+        (self.bitmap().len() + 7) / 8
+    }
+
+    pub fn pack_into_slice(&self, slice: &mut [u8]) {
+        use bitvec::prelude::*;
+
+        let bits = BitSlice::<LittleEndian, u8>::from_slice_mut(slice);
+
+        for (index, &value) in self.bitmap().iter().enumerate() {
+            bits.set(index, value);
+        }
+    }
 }
 
 impl<Bitmap> OutputSet<Bitmap>
@@ -347,6 +363,16 @@ where
         self.bitmap_mut().copy_from_slice(result.bitmap());
 
         perm
+    }
+
+    pub fn unpack_from_slice(&mut self, slice: &[u8]) {
+        use bitvec::prelude::*;
+
+        let bits = BitSlice::<LittleEndian, u8>::from_slice(slice);
+
+        for (index, value) in self.bitmap_mut().iter_mut().enumerate() {
+            *value = bits[index];
+        }
     }
 }
 
