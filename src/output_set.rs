@@ -8,6 +8,8 @@ use std::{
 use arrayvec::ArrayVec;
 use rustc_hash::FxHasher;
 
+const PAIR_ABSTRACTION_GROUPS: usize = 4;
+
 pub const MAX_CHANNELS: usize = 11;
 
 pub type CVec<T> = ArrayVec<[T; MAX_CHANNELS]>;
@@ -66,7 +68,7 @@ impl OutputSet {
     }
 
     pub fn abstraction_len_for_channels(channels: usize) -> usize {
-        channels.saturating_sub(1) + 1 + channels * channels * 3
+        channels.saturating_sub(1) + 1 + channels * (channels - 1) * PAIR_ABSTRACTION_GROUPS
     }
 }
 
@@ -296,6 +298,39 @@ where
         abstraction
     }
 
+    pub fn channel_pair_abstraction(
+        &self,
+        channel_pair: [usize; 2],
+    ) -> [usize; PAIR_ABSTRACTION_GROUPS] {
+        let bitmap = self.bitmap();
+
+        let mut abstraction = [0; PAIR_ABSTRACTION_GROUPS];
+
+        let mask_0 = 1 << channel_pair[0];
+        let mask_1 = 1 << channel_pair[1];
+
+        let mask = mask_0 | mask_1;
+
+        let mut index = mask;
+        let size = bitmap.len();
+
+        while index < size {
+            let value_0 = bitmap[index];
+            let value_1 = bitmap[index ^ mask_0];
+            let value_2 = bitmap[index ^ mask_1];
+            let value_3 = bitmap[index ^ mask];
+
+            abstraction[0] += value_0 as usize;
+            abstraction[1] += value_1 as usize;
+            abstraction[2] += value_2 as usize;
+            abstraction[3] += value_3 as usize;
+
+            index = (index + 1) | mask;
+        }
+
+        abstraction
+    }
+
     pub fn subsumes_unpermuted(&self, other: OutputSet<impl AsRef<[bool]>>) -> bool {
         self.bitmap()
             .iter()
@@ -339,19 +374,35 @@ where
 
         abstraction[1..histogram.len() - 1].copy_from_slice(&histogram[1..histogram.len() - 1]);
 
-        let channel_abstractions = &mut abstraction[histogram.len() - 1..];
+        let pair_abstractions = &mut abstraction[histogram.len() - 1..];
 
         for channel in 0..self.channels() {
-            let channel_abstraction = self.channel_abstraction(channel);
-            for (group, group_abstraction) in channel_abstraction.iter().enumerate() {
-                for (weight, &abstraction_value) in group_abstraction.iter().enumerate() {
-                    channel_abstractions[channel + self.channels() * (group + 3 * weight)] =
+            let mut groups = <[CVec<usize>; PAIR_ABSTRACTION_GROUPS]>::default();
+            for other_channel in 0..self.channels() {
+                if other_channel == channel {
+                    continue;
+                }
+                for (&abstraction_value, group_values) in self
+                    .channel_pair_abstraction([channel, other_channel])
+                    .iter()
+                    .zip(groups.iter_mut())
+                {
+                    group_values.push(abstraction_value);
+                }
+            }
+            for group_values in groups.iter_mut() {
+                group_values.sort();
+            }
+            for (group, group_values) in groups.iter().enumerate() {
+                for (index, &abstraction_value) in group_values.iter().enumerate() {
+                    pair_abstractions
+                        [channel + self.channels() * (group + PAIR_ABSTRACTION_GROUPS * index)] =
                         abstraction_value;
                 }
             }
         }
 
-        for chunk in channel_abstractions.chunks_mut(self.channels()) {
+        for chunk in pair_abstractions.chunks_mut(self.channels()) {
             chunk.sort();
         }
     }
