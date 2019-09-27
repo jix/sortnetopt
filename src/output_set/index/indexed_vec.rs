@@ -6,7 +6,7 @@ use std::{
 
 use arrayref::array_mut_ref;
 
-const SCALE: usize = 4;
+const SCALE: usize = 8;
 const MASK: usize = SCALE - 1;
 
 pub trait IndexableValue: Copy + Ord + TryFrom<u64> + Into<u64> + Default + Debug {
@@ -37,7 +37,7 @@ impl IndexableValue for u64 {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct IndexedVec<T: IndexableValue> {
     values: Vec<T>,
     range_indexes: Vec<Vec<[T; 2]>>,
@@ -173,6 +173,8 @@ impl<T: IndexableValue> IndexedVec<T> {
             Bound::Unbounded => T::max_value(),
             Bound::Excluded(&value) if value <= low.into() => return None,
             Bound::Included(&value) if value < low.into() => return None,
+            Bound::Excluded(&value) if value > T::max_value().into() => T::max_value(),
+            Bound::Included(&value) if value >= T::max_value().into() => T::max_value(),
             Bound::Excluded(&value) => T::try_from(value - 1).ok().unwrap(),
             Bound::Included(&value) => T::try_from(value).ok().unwrap(),
         };

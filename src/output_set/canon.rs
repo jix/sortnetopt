@@ -113,7 +113,7 @@ macro_rules! alloc {
 }
 
 impl Canonicalize {
-    pub fn new(mut output_set: OutputSet<&mut [bool]>) -> Self {
+    pub fn new(mut output_set: OutputSet<&mut [bool]>, inversion: bool) -> Self {
         let mut new = Self {
             bitmap_len: 1 << output_set.channels(),
             channels: output_set.channels(),
@@ -146,13 +146,15 @@ impl Canonicalize {
         let identity = alloc!(new, output_set.as_ref(), data.clone());
         new.layer.push(identity);
 
-        data.perm.invert = true;
-        let inverted = alloc!(new, output_set.as_ref(), data);
-        get_mut!(new, inverted).invert();
-        if get!(new, inverted) == get!(new, identity) {
-            new.free_list.push(inverted);
-        } else {
-            new.layer.push(inverted);
+        if inversion {
+            data.perm.invert = true;
+            let inverted = alloc!(new, output_set.as_ref(), data);
+            get_mut!(new, inverted).invert();
+            if get!(new, inverted) == get!(new, identity) {
+                new.free_list.push(inverted);
+            } else {
+                new.layer.push(inverted);
+            }
         }
 
         new

@@ -13,12 +13,13 @@ pub const MAX_CHANNELS: usize = 11;
 pub type CVec<T> = ArrayVec<[T; MAX_CHANNELS]>;
 pub type WVec<T> = ArrayVec<[T; MAX_CHANNELS + 1]>;
 
+pub mod index;
 pub mod packed_vec;
 
 mod canon;
 mod subsume;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Hash, Debug)]
 pub struct OutputSet<Bitmap = Vec<bool>> {
     channels: usize,
     bitmap: Bitmap,
@@ -63,6 +64,10 @@ impl OutputSet {
             bitmap: vec![true; 1 << channels],
         }
     }
+
+    pub fn abstraction_len_for_channels(channels: usize) -> usize {
+        channels.saturating_sub(1) + 1 + channels * channels * 3
+    }
 }
 
 impl<Bitmap> OutputSet<Bitmap>
@@ -99,6 +104,10 @@ where
             channels: self.channels,
             bitmap: self.bitmap().to_owned(),
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.bitmap().iter().map(|&present| present as usize).sum()
     }
 
     pub fn weight_histogram(&self) -> WVec<usize> {
@@ -259,6 +268,34 @@ where
         }
     }
 
+    pub fn channel_abstraction(&self, channel: usize) -> [CVec<usize>; 3] {
+        let bitmap = self.bitmap();
+
+        let weights = self.channels();
+        let mut abstraction = [
+            repeat(0).take(weights).collect::<CVec<_>>(),
+            repeat(0).take(weights).collect::<CVec<_>>(),
+            repeat(0).take(weights).collect::<CVec<_>>(),
+        ];
+
+        let mask = 1 << channel;
+
+        let mut index = mask;
+        let size = bitmap.len();
+
+        while index < size {
+            let weight = (index & !mask).count_ones() as usize;
+            let value_hi = bitmap[index];
+            let value_lo = bitmap[index ^ mask];
+            abstraction[0][weight] += value_lo as usize;
+            abstraction[1][weight] += value_hi as usize;
+            abstraction[2][weight] += (value_lo & value_hi) as usize;
+            index = (index + 1) | mask;
+        }
+
+        abstraction
+    }
+
     pub fn subsumes_unpermuted(&self, other: OutputSet<impl AsRef<[bool]>>) -> bool {
         self.bitmap()
             .iter()
@@ -283,6 +320,47 @@ where
             bits.set(index, value);
         }
     }
+
+    pub fn abstraction_len(&self) -> usize {
+        OutputSet::abstraction_len_for_channels(self.channels())
+    }
+
+    pub fn write_abstraction_into(&self, abstraction: &mut [usize]) {
+        assert_eq!(abstraction.len(), self.abstraction_len());
+
+        let histogram = self.weight_histogram();
+        let total_weight = histogram.iter().cloned().sum::<usize>();
+
+        abstraction[0] = total_weight;
+
+        if abstraction.len() == 1 {
+            return;
+        }
+
+        abstraction[1..histogram.len() - 1].copy_from_slice(&histogram[1..histogram.len() - 1]);
+
+        let channel_abstractions = &mut abstraction[histogram.len() - 1..];
+
+        for channel in 0..self.channels() {
+            let channel_abstraction = self.channel_abstraction(channel);
+            for (group, group_abstraction) in channel_abstraction.iter().enumerate() {
+                for (weight, &abstraction_value) in group_abstraction.iter().enumerate() {
+                    channel_abstractions[channel + self.channels() * (group + 3 * weight)] =
+                        abstraction_value;
+                }
+            }
+        }
+
+        for chunk in channel_abstractions.chunks_mut(self.channels()) {
+            chunk.sort();
+        }
+    }
+
+    pub fn abstraction(&self) -> Vec<usize> {
+        let mut result = vec![0; self.abstraction_len()];
+        self.write_abstraction_into(&mut result);
+        result
+    }
 }
 
 impl<Bitmap> OutputSet<Bitmap>
@@ -300,7 +378,7 @@ where
         self.bitmap.as_mut()
     }
 
-    pub fn apply_comparator(&mut self, channels: [usize; 2]) {
+    pub fn apply_comparator(&mut self, channels: [usize; 2]) -> bool {
         debug_assert_ne!(channels[0], channels[1]);
         debug_assert!(channels[0] < self.channels);
         debug_assert!(channels[1] < self.channels);
@@ -316,11 +394,19 @@ where
 
         let size = bitmap.len();
 
+        let mut out_of_order_present = false;
+        let mut in_order_present = false;
+
         while index < size {
             let out_of_order = replace(&mut bitmap[index ^ mask_0], false);
-            bitmap[index ^ mask_1] |= out_of_order;
+            out_of_order_present |= out_of_order;
+            let in_order = &mut bitmap[index ^ mask_1];
+            in_order_present |= *in_order;
+            *in_order |= out_of_order;
             index = (index + 1) | comparator_mask;
         }
+
+        out_of_order_present & in_order_present
     }
 
     pub fn swap_channels(&mut self, channels: [usize; 2]) {
@@ -351,12 +437,12 @@ where
         self.bitmap_mut().reverse()
     }
 
-    pub fn canonicalize(&mut self) -> Perm {
+    pub fn canonicalize(&mut self, inversion: bool) -> Perm {
         if self.channels() == 0 {
             return Perm::identity(0);
         }
 
-        let mut canonicalize = canon::Canonicalize::new(self.as_mut());
+        let mut canonicalize = canon::Canonicalize::new(self.as_mut(), inversion);
 
         let (result, perm) = canonicalize.canonicalize();
 
@@ -373,6 +459,10 @@ where
         for (index, value) in self.bitmap_mut().iter_mut().enumerate() {
             *value = bits[index];
         }
+    }
+
+    pub fn copy_from(&mut self, other: OutputSet<impl AsRef<[bool]>>) {
+        self.bitmap_mut().copy_from_slice(other.bitmap())
     }
 }
 
@@ -436,7 +526,7 @@ mod test {
                 assert!(!output_set.is_sorted());
                 output_set.apply_comparator(comparator);
                 let mut canonical = output_set.clone();
-                canonical.canonicalize();
+                canonical.canonicalize(true);
 
                 let mut canonical_2 = output_set.clone();
 
@@ -447,7 +537,7 @@ mod test {
                 for &pair in SORT_11[..limit].iter() {
                     canonical_2.swap_channels(pair);
                 }
-                canonical_2.canonicalize();
+                canonical_2.canonicalize(true);
 
                 assert_eq!(canonical, canonical_2);
 

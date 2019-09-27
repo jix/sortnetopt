@@ -21,6 +21,10 @@ impl PackedOutputSetVec {
         self.len
     }
 
+    pub fn channels(&self) -> usize {
+        self.channels
+    }
+
     pub fn push(&mut self, output_set: OutputSet<&[bool]>) {
         assert_eq!(output_set.channels(), self.channels);
         let stride = self.stride();
@@ -30,12 +34,27 @@ impl PackedOutputSetVec {
         self.len += 1;
     }
 
+    pub fn push_packed(&mut self, packed_output_set: &[u8]) {
+        let stride = self.stride();
+        assert_eq!(packed_output_set.len(), stride);
+        self.buffer.extend_from_slice(packed_output_set);
+        self.len += 1;
+    }
+
     pub fn set(&mut self, index: usize, output_set: OutputSet<&[bool]>) {
         assert_eq!(output_set.channels(), self.channels);
         assert!(index < self.len);
         let stride = self.stride();
         let offset = stride * index;
         output_set.pack_into_slice(&mut self.buffer[offset..])
+    }
+
+    pub fn set_packed(&mut self, index: usize, packed_output_set: &[u8]) {
+        assert!(index < self.len);
+        let stride = self.stride();
+        assert_eq!(packed_output_set.len(), stride);
+        let offset = stride * index;
+        self.buffer[offset..][..stride].copy_from_slice(packed_output_set)
     }
 
     pub fn get_into(&self, index: usize, mut output_set: OutputSet<&mut [bool]>) {
@@ -50,6 +69,13 @@ impl PackedOutputSetVec {
         let mut result = OutputSet::all_values(self.channels);
         self.get_into(index, result.as_mut());
         result
+    }
+
+    pub fn get_packed(&self, index: usize) -> &[u8] {
+        assert!(index < self.len);
+        let stride = self.stride();
+        let offset = stride * index;
+        &self.buffer[offset..][..stride]
     }
 
     pub fn remove_last(&mut self) {
