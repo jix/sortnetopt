@@ -394,4 +394,13 @@ impl<Dir: IndexDirection> OutputSetIndex<Dir> {
     pub fn len(&self) -> usize {
         self.values.len() + self.trees.iter().map(|tree| tree.len()).sum::<usize>()
     }
+
+    pub fn dump_dot(&self, output: &mut impl std::io::Write) -> std::io::Result<()> {
+        writeln!(output, "digraph {{")?;
+        for (tree_id, tree) in self.trees.iter().enumerate() {
+            tree.dump_dot(tree_id, output)?;
+        }
+        writeln!(output, "}}")?;
+        Ok(())
+    }
 }

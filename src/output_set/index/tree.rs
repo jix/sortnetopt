@@ -476,6 +476,30 @@ impl Tree {
         }
     }
 
+    pub fn dump_dot(&self, tree: usize, output: &mut impl std::io::Write) -> std::io::Result<()> {
+        let mut state = self.traversal_root();
+        loop {
+            match state {
+                TraversalState::Done => {
+                    return Ok(());
+                }
+                TraversalState::Node { id } => match self.nodes[id].links {
+                    Links::Inner { children } => {
+                        writeln!(output, "  n{}_{} -> n{}_{};", tree, id, tree, children[0])?;
+                        writeln!(output, "  n{}_{} -> n{}_{};", tree, id, tree, children[1])?;
+                        state = self.traversal_enter(true, id);
+                    }
+                    Links::Leaf { .. } => {
+                        state = self.traversal_skip(true, id);
+                    }
+                },
+                TraversalState::Point { .. } => {
+                    unreachable!();
+                }
+            }
+        }
+    }
+
     pub fn traverse<S, N, A>(
         &self,
         mut user_state: S,

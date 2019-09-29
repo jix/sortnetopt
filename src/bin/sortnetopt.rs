@@ -30,6 +30,9 @@ enum OptCommand {
 struct OptSearch {
     /// Number of channels in the sorting network
     channels: usize,
+    /// Dump index trees as graphviz graph
+    #[structopt(short, long)]
+    dump_index: bool,
 }
 
 fn main() {
@@ -82,5 +85,13 @@ fn cmd_search(opt: OptSearch) {
         log::info!("layer {} size is {}", layer_count, next_layer.len(),);
 
         layer = next_layer;
+
+        if opt.dump_index {
+            layer
+                .dump_dot(&mut std::io::BufWriter::new(
+                    std::fs::File::create(format!("_layer_{}.dot", layer_count)).unwrap(),
+                ))
+                .unwrap();
+        }
     }
 }
