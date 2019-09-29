@@ -1,384 +1,397 @@
-use std::{
-    hash::{BuildHasherDefault, Hash, Hasher},
-    iter::repeat,
-    mem::replace,
-    ops::Range,
-};
+use std::{cmp::Reverse, iter::repeat, mem::replace};
 
-use hashbrown::{hash_map::RawEntryMut, HashMap};
-use rustc_hash::FxHasher;
+use super::{BVec, OutputSet};
 
-use self::indexed_vec::IndexedVec;
-use super::{packed_vec::PackedOutputSetVec, OutputSet};
+mod tree;
 
-pub mod indexed_vec;
+use tree::{Augmentation, TraversalMut, Tree};
 
-struct ExternHash<T> {
-    value: T,
-    hash: u64,
-}
+pub enum Lower {}
 
-impl<T> Hash for ExternHash<T> {
-    fn hash<H: Hasher>(&self, hasher: &mut H) {
-        hasher.write_u64(self.hash)
+pub enum Upper {}
+
+const TREE_THRESHOLD: usize = 32;
+
+pub trait IndexDirection {
+    fn lookup_dir() -> bool;
+
+    fn can_improve(best_so_far: Option<u8>, range: [u8; 2]) -> bool;
+    fn does_improve(best_so_far: Option<u8>, value: u8) -> bool;
+
+    fn can_be_updated(range: [u8; 2], value: u8) -> bool;
+    fn would_be_updated(candidate_value: u8, lookup_value: u8) -> bool;
+
+    fn test_abstraction_range(candidate_range: &[[u16; 2]], lookup: &[u16]) -> bool;
+
+    fn test_abstraction_range_update(candidate_range: &[[u16; 2]], lookup: &[u16]) -> bool;
+
+    fn test_abstraction(candidate: &[u16], lookup: &[u16]) -> bool;
+
+    fn test_abstraction_update(candidate: &[u16], lookup: &[u16]) -> bool {
+        Self::test_abstraction(lookup, candidate)
+    }
+
+    fn test_precise(candidate: OutputSet<&[bool]>, lookup: OutputSet<&[bool]>) -> bool;
+
+    fn test_precise_update(candidate: OutputSet<&[bool]>, lookup: OutputSet<&[bool]>) -> bool {
+        Self::test_precise(lookup, candidate)
     }
 }
 
-#[derive(Default)]
-struct ExternHasher(u64);
-
-impl Hasher for ExternHasher {
-    fn write(&mut self, _bytes: &[u8]) {
-        panic!("only write_u64 is supported")
+impl IndexDirection for Lower {
+    fn lookup_dir() -> bool {
+        true
     }
 
-    fn write_u64(&mut self, hash: u64) {
-        self.0 = hash;
-    }
-
-    fn finish(&self) -> u64 {
-        self.0
-    }
-}
-
-pub trait OutputSetIndexValue {
-    fn filter_len() -> usize;
-
-    fn filter(&self, filters: &mut [usize]);
-}
-
-impl OutputSetIndexValue for () {
-    fn filter_len() -> usize {
-        0
-    }
-
-    fn filter(&self, _filters: &mut [usize]) {}
-}
-
-impl OutputSetIndexValue for usize {
-    fn filter_len() -> usize {
-        1
-    }
-
-    fn filter(&self, filters: &mut [usize]) {
-        filters[0] = *self
-    }
-}
-
-pub struct OutputSetIndex<T> {
-    output_sets: PackedOutputSetVec,
-    lookup: HashMap<ExternHash<usize>, (), BuildHasherDefault<ExternHasher>>,
-    values: Vec<T>,
-    filters: Vec<IndexedVec<u16>>,
-    byte_buffer: Vec<u8>,
-    usize_buffer: Vec<usize>,
-}
-
-impl<T: OutputSetIndexValue> OutputSetIndex<T> {
-    pub fn new(channels: usize) -> Self {
-        assert!(channels >= 2);
-
-        Self {
-            output_sets: PackedOutputSetVec::new(channels),
-            lookup: Default::default(),
-            values: vec![],
-            filters: repeat(IndexedVec::<u16>::default())
-                .take(OutputSet::abstraction_len_for_channels(channels) + T::filter_len())
-                .collect(),
-            byte_buffer: vec![],
-            usize_buffer: vec![],
+    fn can_improve(best_so_far: Option<u8>, range: [u8; 2]) -> bool {
+        if let Some(best_so_far) = best_so_far {
+            range[1] > best_so_far
+        } else {
+            true
         }
     }
 
-    pub fn len(&self) -> usize {
-        self.output_sets.len()
+    fn does_improve(best_so_far: Option<u8>, value: u8) -> bool {
+        if let Some(best_so_far) = best_so_far {
+            value > best_so_far
+        } else {
+            true
+        }
+    }
+
+    fn can_be_updated(range: [u8; 2], value: u8) -> bool {
+        range[0] <= value
+    }
+
+    fn would_be_updated(candidate_value: u8, lookup_value: u8) -> bool {
+        candidate_value <= lookup_value
+    }
+
+    fn test_abstraction_range(candidate_range: &[[u16; 2]], lookup: &[u16]) -> bool {
+        candidate_range
+            .iter()
+            .zip(lookup.iter())
+            .all(|(candidate, &lookup)| candidate[0] <= lookup)
+    }
+
+    fn test_abstraction_range_update(candidate_range: &[[u16; 2]], lookup: &[u16]) -> bool {
+        candidate_range
+            .iter()
+            .zip(lookup.iter())
+            .all(|(candidate, &lookup)| candidate[1] >= lookup)
+    }
+
+    fn test_abstraction(candidate: &[u16], lookup: &[u16]) -> bool {
+        candidate
+            .iter()
+            .zip(lookup.iter())
+            .all(|(&candidate, &lookup)| candidate <= lookup)
+    }
+
+    fn test_precise(candidate: OutputSet<&[bool]>, lookup: OutputSet<&[bool]>) -> bool {
+        candidate.subsumes_permuted(lookup)
+    }
+}
+
+impl IndexDirection for Upper {
+    fn lookup_dir() -> bool {
+        false
+    }
+
+    fn can_improve(best_so_far: Option<u8>, range: [u8; 2]) -> bool {
+        if let Some(best_so_far) = best_so_far {
+            range[0] < best_so_far
+        } else {
+            true
+        }
+    }
+
+    fn does_improve(best_so_far: Option<u8>, value: u8) -> bool {
+        if let Some(best_so_far) = best_so_far {
+            value < best_so_far
+        } else {
+            true
+        }
+    }
+
+    fn can_be_updated(range: [u8; 2], value: u8) -> bool {
+        range[1] >= value
+    }
+
+    fn would_be_updated(candidate_value: u8, lookup_value: u8) -> bool {
+        candidate_value >= lookup_value
+    }
+
+    fn test_abstraction_range(candidate_range: &[[u16; 2]], lookup: &[u16]) -> bool {
+        candidate_range
+            .iter()
+            .zip(lookup.iter())
+            .all(|(candidate, &lookup)| candidate[1] >= lookup)
+    }
+
+    fn test_abstraction_range_update(candidate_range: &[[u16; 2]], lookup: &[u16]) -> bool {
+        candidate_range
+            .iter()
+            .zip(lookup.iter())
+            .all(|(candidate, &lookup)| candidate[0] <= lookup)
+    }
+
+    fn test_abstraction(candidate: &[u16], lookup: &[u16]) -> bool {
+        candidate
+            .iter()
+            .zip(lookup.iter())
+            .all(|(&candidate, &lookup)| candidate >= lookup)
+    }
+
+    fn test_precise(candidate: OutputSet<&[bool]>, lookup: OutputSet<&[bool]>) -> bool {
+        lookup.subsumes_permuted(candidate)
+    }
+}
+
+pub struct OutputSetIndex<Dir> {
+    direction: std::marker::PhantomData<Dir>,
+    channels: usize,
+    trees: Vec<Tree>,
+    point_dim: usize,
+    points: Vec<u16>,
+    packed_dim: usize,
+    packed: Vec<u8>,
+    values: Vec<u8>,
+}
+
+impl<Dir: IndexDirection> OutputSetIndex<Dir> {
+    pub fn new(channels: usize) -> Self {
+        Self {
+            direction: std::marker::PhantomData,
+            channels,
+            trees: vec![],
+            point_dim: OutputSet::abstraction_len_for_channels(channels),
+            points: vec![],
+            packed_dim: OutputSet::packed_len_for_channels(channels),
+            packed: vec![],
+            values: vec![],
+        }
+    }
+
+    pub fn lookup_with_abstraction(
+        &self,
+        output_set: OutputSet<&[bool]>,
+        abstraction: &[u16],
+    ) -> Option<u8> {
+        let mut best_so_far = None;
+
+        let mut bitmap = repeat(false).take(1 << self.channels).collect::<BVec<_>>();
+        let mut candidate_output_set = OutputSet::from_bitmap(self.channels, &mut bitmap[..]);
+
+        let mut node_filter = |best_so_far: &mut Option<u8>,
+                               augmentation: &Augmentation,
+                               ranges: &[[u16; 2]]|
+         -> bool {
+            Dir::can_improve(*best_so_far, augmentation.value_range)
+                && Dir::test_abstraction_range(ranges, abstraction)
+        };
+
+        let mut action = |best_so_far: &mut Option<u8>,
+                          candidate_abstraction: &[u16],
+                          packed_candidate: &[u8],
+                          value: u8|
+         -> bool {
+            if !Dir::does_improve(*best_so_far, value) {
+                return true;
+            }
+            if !Dir::test_abstraction(candidate_abstraction, abstraction) {
+                return true;
+            }
+            candidate_output_set.unpack_from_slice(packed_candidate);
+            if candidate_output_set != output_set {
+                if !Dir::test_precise(candidate_output_set.as_ref(), output_set) {
+                    return true;
+                }
+            }
+
+            *best_so_far = Some(value);
+
+            true
+        };
+
+        for tree in self.trees.iter() {
+            best_so_far = tree.traverse(
+                best_so_far,
+                Dir::lookup_dir(),
+                &mut node_filter,
+                &mut action,
+            );
+        }
+
+        for (index, &value) in self.values.iter().enumerate() {
+            action(
+                &mut best_so_far,
+                &self.points[index * self.point_dim..][..self.point_dim],
+                &self.packed[index * self.packed_dim..][..self.packed_dim],
+                value,
+            );
+        }
+
+        best_so_far
+    }
+
+    pub fn insert_with_abstraction(
+        &mut self,
+        output_set: OutputSet<&[bool]>,
+        abstraction: &[u16],
+        value: u8,
+    ) {
+        let best_so_far = self.lookup_with_abstraction(output_set, abstraction);
+
+        let mut bitmap = repeat(false).take(1 << self.channels).collect::<BVec<_>>();
+        let mut candidate_output_set = OutputSet::from_bitmap(self.channels, &mut bitmap[..]);
+
+        let mut updated_in_place = false;
+
+        if !Dir::does_improve(best_so_far, value) {
+            return;
+        }
+
+        let mut node_filter =
+            |_: &mut (), augmentation: &Augmentation, ranges: &[[u16; 2]]| -> bool {
+                Dir::can_be_updated(augmentation.value_range, value)
+                    && Dir::test_abstraction_range_update(ranges, abstraction)
+            };
+
+        let mut action = |_: &mut (),
+                          candidate_abstraction: &[u16],
+                          packed_candidate: &[u8],
+                          candidate_value: &mut u8|
+         -> TraversalMut {
+            if !Dir::would_be_updated(*candidate_value, value) {
+                return TraversalMut::Retain;
+            }
+            if !Dir::test_abstraction_update(candidate_abstraction, abstraction) {
+                return TraversalMut::Retain;
+            }
+            candidate_output_set.unpack_from_slice(packed_candidate);
+            if candidate_output_set == output_set {
+                assert!(!updated_in_place);
+                *candidate_value = value;
+                updated_in_place = true;
+                return TraversalMut::Retain;
+            }
+            if !Dir::test_precise_update(candidate_output_set.as_ref(), output_set) {
+                return TraversalMut::Retain;
+            }
+
+            TraversalMut::Remove
+        };
+
+        for tree in self.trees.iter_mut() {
+            tree.traverse_mut((), Dir::lookup_dir(), &mut node_filter, &mut action);
+        }
+
+        self.trees.retain(|tree| !tree.is_empty());
+
+        let mut index = 0;
+
+        while index < self.values.len() {
+            let action_result = action(
+                &mut (),
+                &self.points[index * self.point_dim..][..self.point_dim],
+                &self.packed[index * self.packed_dim..][..self.packed_dim],
+                &mut self.values[index],
+            );
+
+            if action_result == TraversalMut::Remove {
+                self.values.swap_remove(index);
+
+                if index != self.values.len() {
+                    let (keep, last) = self.points.split_at_mut(self.values.len() * self.point_dim);
+                    keep[index * self.point_dim..][..self.point_dim].copy_from_slice(last);
+
+                    let (keep, last) = self
+                        .packed
+                        .split_at_mut(self.values.len() * self.packed_dim);
+                    keep[index * self.packed_dim..][..self.packed_dim].copy_from_slice(last);
+                }
+                self.points.truncate(self.values.len() * self.point_dim);
+                self.packed.truncate(self.values.len() * self.packed_dim);
+            } else {
+                index += 1;
+            }
+        }
+
+        if updated_in_place {
+            return;
+        }
+
+        let old_size = self.packed.len();
+        self.packed.resize(old_size + self.packed_dim, 0);
+        output_set.pack_into_slice(&mut self.packed[old_size..]);
+
+        self.points.extend_from_slice(abstraction);
+        self.values.push(value);
+
+        if self.values.len() >= TREE_THRESHOLD {
+            self.trees.sort_by_key(|tree| Reverse(tree.len()));
+
+            while let Some(tree) = self.trees.pop() {
+                if tree.len() > self.values.len() {
+                    self.trees.push(tree);
+                    break;
+                }
+                tree.traverse(
+                    (),
+                    Dir::lookup_dir(),
+                    |_, _, _| true,
+                    |_, point, packed, value| {
+                        self.points.extend_from_slice(point);
+                        self.packed.extend_from_slice(packed);
+                        self.values.push(value);
+                        true
+                    },
+                );
+            }
+
+            let tree = Tree::new(
+                self.point_dim,
+                replace(&mut self.points, vec![]),
+                self.packed_dim,
+                replace(&mut self.packed, vec![]),
+                replace(&mut self.values, vec![]),
+            );
+
+            self.trees.push(tree);
+        }
+    }
+
+    pub fn for_each(&self, mut action: impl FnMut(OutputSet<&[bool]>, &[u16], u8)) {
+        let mut bitmap = repeat(false).take(1 << self.channels).collect::<BVec<_>>();
+        let mut output_set = OutputSet::from_bitmap(self.channels, &mut bitmap[..]);
+
+        let mut action = |_: &mut (), abstraction: &[u16], packed: &[u8], value: u8| -> bool {
+            output_set.unpack_from_slice(packed);
+
+            action(output_set.as_ref(), abstraction, value);
+            true
+        };
+
+        for tree in self.trees.iter() {
+            tree.traverse((), Dir::lookup_dir(), |_, _, _| true, &mut action);
+        }
+
+        for (index, &value) in self.values.iter().enumerate() {
+            action(
+                &mut (),
+                &self.points[index * self.point_dim..][..self.point_dim],
+                &self.packed[index * self.packed_dim..][..self.packed_dim],
+                value,
+            );
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.values.is_empty() && self.trees.is_empty()
     }
 
-    pub fn insert(&mut self, output_set: OutputSet<&[bool]>, value: T) -> Option<T> {
-        self.byte_buffer.resize(output_set.packed_len(), 0);
-        output_set.pack_into_slice(&mut self.byte_buffer);
-
-        let mut hasher = FxHasher::default();
-        self.byte_buffer.hash(&mut hasher);
-        let hash = hasher.finish();
-
-        let (output_sets, byte_buffer) = (&self.output_sets, &self.byte_buffer);
-
-        match self.lookup.raw_entry_mut().from_hash(hash, |entry| {
-            entry.hash == hash && output_sets.get_packed(entry.value) == byte_buffer.as_slice()
-        }) {
-            RawEntryMut::Occupied(entry) => {
-                let index = entry.key().value;
-
-                self.usize_buffer.resize(T::filter_len(), 0);
-                value.filter(&mut self.usize_buffer);
-
-                for (filter, &abstraction_value) in
-                    self.filters.iter_mut().zip(self.usize_buffer.iter())
-                {
-                    filter.set(index, abstraction_value as u64)
-                }
-
-                Some(replace(&mut self.values[index], value))
-            }
-            RawEntryMut::Vacant(entry) => {
-                let index = self.output_sets.len();
-                self.output_sets.push_packed(&self.byte_buffer);
-
-                let abstraction_len = output_set.abstraction_len();
-
-                self.usize_buffer
-                    .resize(abstraction_len + T::filter_len(), 0);
-                output_set.write_abstraction_into(&mut self.usize_buffer[T::filter_len()..]);
-                value.filter(&mut self.usize_buffer[..T::filter_len()]);
-
-                for (filter, &abstraction_value) in
-                    self.filters.iter_mut().zip(self.usize_buffer.iter())
-                {
-                    filter.push(abstraction_value as u64)
-                }
-
-                self.values.push(value);
-
-                entry.insert_hashed_nocheck(hash, ExternHash { value: index, hash }, ());
-                None
-            }
-        }
-    }
-
-    pub fn packed_lookup_id(&self, packed: &[u8]) -> Option<usize> {
-        let mut hasher = FxHasher::default();
-        packed.hash(&mut hasher);
-        let hash = hasher.finish();
-
-        let output_sets = &self.output_sets;
-
-        match self.lookup.raw_entry().from_hash(hash, |entry| {
-            entry.hash == hash && output_sets.get_packed(entry.value) == packed
-        }) {
-            Some((key, _value)) => Some(key.value),
-            None => None,
-        }
-    }
-
-    pub fn lookup_id(&self, output_set: OutputSet<&[bool]>) -> Option<usize> {
-        let mut buffer = vec![0; output_set.packed_len()];
-        output_set.pack_into_slice(&mut buffer);
-        self.packed_lookup_id(&buffer)
-    }
-
-    pub fn remove_by_id(&mut self, id: usize) -> T {
-        let value = self.values.swap_remove(id);
-        for filter in self.filters.iter_mut() {
-            filter.swap_remove(id);
-        }
-
-        let last_id = self.output_sets.len() - 1;
-
-        if id != last_id {
-            let packed_last = self.output_sets.get_packed(last_id);
-            self.byte_buffer.clear();
-            self.byte_buffer.extend_from_slice(packed_last);
-
-            let mut hasher = FxHasher::default();
-            packed_last.hash(&mut hasher);
-            let hash = hasher.finish();
-
-            let output_sets = &self.output_sets;
-
-            match self.lookup.raw_entry_mut().from_hash(hash, |entry| {
-                entry.hash == hash && output_sets.get_packed(entry.value) == packed_last
-            }) {
-                RawEntryMut::Occupied(mut entry) => entry.key_mut().value = id,
-                _ => unreachable!(),
-            }
-        }
-
-        let packed = self.output_sets.get_packed(id);
-        let mut hasher = FxHasher::default();
-        packed.hash(&mut hasher);
-        let hash = hasher.finish();
-
-        let output_sets = &self.output_sets;
-
-        match self.lookup.raw_entry_mut().from_hash(hash, |entry| {
-            entry.hash == hash && output_sets.get_packed(entry.value) == packed
-        }) {
-            RawEntryMut::Occupied(entry) => entry.remove(),
-            _ => unreachable!(),
-        }
-
-        if id != last_id {
-            self.output_sets.set_packed(id, &self.byte_buffer);
-        }
-        self.output_sets.remove_last();
-
-        value
-    }
-
-    pub fn get_packed_by_id(&self, id: usize) -> &[u8] {
-        self.output_sets.get_packed(id)
-    }
-
-    pub fn get_value_by_id(&self, id: usize) -> &T {
-        &self.values[id]
-    }
-
-    fn scan_ids(&self, filter_ranges: &[Range<usize>], action: &mut impl FnMut(usize) -> bool) {
-        let mut offset = 0;
-        let mut counter = 0;
-        let mut filter_index = 0;
-        loop {
-            let filter_range = &filter_ranges[filter_index];
-            if let Some(next_offset) = self.filters[filter_index]
-                .find_value_in_range(offset, filter_range.start as u64..filter_range.end as u64)
-            {
-                if next_offset == offset {
-                    counter += 1;
-                    if counter == filter_ranges.len() {
-                        if !action(offset) {
-                            return;
-                        }
-                        counter = 0;
-                        offset += 1;
-                    }
-                } else {
-                    offset = next_offset;
-                    counter = 1;
-                }
-            } else {
-                return;
-            }
-            filter_index += 1;
-            if filter_index == filter_ranges.len() {
-                filter_index = 0;
-            }
-        }
-    }
-
-    pub fn scan_subsumption(
-        &self,
-        subsuming: bool,
-        output_set: OutputSet<&[bool]>,
-        filter: &[Range<usize>],
-        strict: bool,
-        action: &mut impl FnMut(usize, OutputSet<&[bool]>, &T) -> bool,
-    ) -> (usize, usize) {
-        assert_eq!(output_set.channels(), self.output_sets.channels());
-        assert_eq!(filter.len(), T::filter_len());
-
-        let mut filter_ranges = Vec::with_capacity(output_set.abstraction_len() + T::filter_len());
-        filter_ranges.extend_from_slice(filter);
-
-        if subsuming {
-            filter_ranges.extend(
-                output_set
-                    .abstraction()
-                    .into_iter()
-                    .map(|value| 0..value + 1),
-            );
-
-            if strict {
-                filter_ranges[T::filter_len()].end -= 1;
-            }
-        } else {
-            filter_ranges.extend(
-                output_set
-                    .abstraction()
-                    .into_iter()
-                    .map(|value| value..usize::max_value()),
-            );
-
-            if strict {
-                filter_ranges[T::filter_len()].start += 1;
-            }
-        }
-
-        let mut candidate = OutputSet::all_values(output_set.channels());
-
-        let mut scan_hits = 0;
-        let mut exact_hits = 0;
-
-        self.scan_ids(&filter_ranges, &mut |id| {
-            scan_hits += 1;
-            self.output_sets.get_into(id, candidate.as_mut());
-            let exact_test = if subsuming {
-                candidate.subsumes_permuted(output_set)
-            } else {
-                output_set.subsumes_permuted(candidate.as_ref())
-            };
-            if exact_test {
-                exact_hits += 1;
-                action(id, candidate.as_ref(), &self.values[id])
-            } else {
-                true
-            }
-        });
-
-        (scan_hits, exact_hits)
-    }
-
-    pub fn scan_subsuming(
-        &self,
-        output_set: OutputSet<&[bool]>,
-        filter: &[Range<usize>],
-        strict: bool,
-        action: &mut impl FnMut(usize, OutputSet<&[bool]>, &T) -> bool,
-    ) -> (usize, usize) {
-        self.scan_subsumption(true, output_set, filter, strict, action)
-    }
-
-    pub fn scan_subsumed(
-        &self,
-        output_set: OutputSet<&[bool]>,
-        filter: &[Range<usize>],
-        strict: bool,
-        action: &mut impl FnMut(usize, OutputSet<&[bool]>, &T) -> bool,
-    ) -> (usize, usize) {
-        self.scan_subsumption(false, output_set, filter, strict, action)
-    }
-
-    pub fn for_each(&self, action: &mut impl FnMut(usize, OutputSet<&[bool]>, &T) -> bool) {
-        let mut output_set = OutputSet::all_values(self.output_sets.channels());
-
-        for (id, value) in self.values.iter().enumerate() {
-            self.output_sets.get_into(id, output_set.as_mut());
-            if !action(id, output_set.as_ref(), value) {
-                break;
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn repeated_insert() {
-        crate::logging::setup(false);
-        let mut index = OutputSetIndex::<usize>::new(11);
-
-        let output_set_0 = OutputSet::all_values(11);
-        let mut output_set_1 = OutputSet::all_values(11);
-        let mut output_set_2 = OutputSet::all_values(11);
-
-        output_set_1.apply_comparator([0, 1]);
-        output_set_2.apply_comparator([2, 3]);
-        output_set_2.apply_comparator([4, 5]);
-
-        assert_eq!(index.insert(output_set_0.as_ref(), 0), None);
-        assert_eq!(index.insert(output_set_1.as_ref(), 1), None);
-        assert_eq!(index.insert(output_set_1.as_ref(), 2), Some(1));
-        assert_eq!(index.insert(output_set_1.as_ref(), 3), Some(2));
-        assert_eq!(index.insert(output_set_0.as_ref(), 4), Some(0));
-        assert_eq!(index.insert(output_set_1.as_ref(), 5), Some(3));
-        assert_eq!(index.insert(output_set_2.as_ref(), 6), None);
-        assert_eq!(index.insert(output_set_0.as_ref(), 7), Some(4));
-        assert_eq!(index.insert(output_set_0.as_ref(), 8), Some(7));
+    pub fn len(&self) -> usize {
+        self.values.len() + self.trees.iter().map(|tree| tree.len()).sum::<usize>()
     }
 }

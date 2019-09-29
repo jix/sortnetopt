@@ -11,12 +11,17 @@ use rustc_hash::FxHasher;
 const PAIR_ABSTRACTION_GROUPS: usize = 4;
 
 pub const MAX_CHANNELS: usize = 11;
+pub const MAX_BITMAP_SIZE: usize = 1 << MAX_CHANNELS;
+pub const MAX_PACKED_SIZE: usize = 1 << (MAX_CHANNELS - 3);
+pub const MAX_ABSTRACTION_SIZE: usize = MAX_CHANNELS * (MAX_CHANNELS - 1) * PAIR_ABSTRACTION_GROUPS;
 
 pub type CVec<T> = ArrayVec<[T; MAX_CHANNELS]>;
 pub type WVec<T> = ArrayVec<[T; MAX_CHANNELS + 1]>;
+pub type BVec<T> = ArrayVec<[T; MAX_BITMAP_SIZE]>;
+pub type PVec<T> = ArrayVec<[T; MAX_PACKED_SIZE]>;
+pub type AVec<T> = ArrayVec<[T; 512]>;
 
 pub mod index;
-pub mod packed_vec;
 
 mod canon;
 mod subsume;
@@ -67,8 +72,12 @@ impl OutputSet {
         }
     }
 
+    pub fn packed_len_for_channels(channels: usize) -> usize {
+        ((1 << channels) + 7) / 8
+    }
+
     pub fn abstraction_len_for_channels(channels: usize) -> usize {
-        channels.saturating_sub(1) + 1 + channels * (channels - 1) * PAIR_ABSTRACTION_GROUPS
+        channels * (channels - 1) * PAIR_ABSTRACTION_GROUPS
     }
 }
 
@@ -360,21 +369,8 @@ where
         OutputSet::abstraction_len_for_channels(self.channels())
     }
 
-    pub fn write_abstraction_into(&self, abstraction: &mut [usize]) {
+    pub fn write_abstraction_into(&self, abstraction: &mut [u16]) {
         assert_eq!(abstraction.len(), self.abstraction_len());
-
-        let histogram = self.weight_histogram();
-        let total_weight = histogram.iter().cloned().sum::<usize>();
-
-        abstraction[0] = total_weight;
-
-        if abstraction.len() == 1 {
-            return;
-        }
-
-        abstraction[1..histogram.len() - 1].copy_from_slice(&histogram[1..histogram.len() - 1]);
-
-        let pair_abstractions = &mut abstraction[histogram.len() - 1..];
 
         for channel in 0..self.channels() {
             let mut groups = <[CVec<usize>; PAIR_ABSTRACTION_GROUPS]>::default();
@@ -395,21 +391,23 @@ where
             }
             for (group, group_values) in groups.iter().enumerate() {
                 for (index, &abstraction_value) in group_values.iter().enumerate() {
-                    pair_abstractions
+                    abstraction
                         [channel + self.channels() * (group + PAIR_ABSTRACTION_GROUPS * index)] =
-                        abstraction_value;
+                        abstraction_value as u16;
                 }
             }
         }
 
-        for chunk in pair_abstractions.chunks_mut(self.channels()) {
+        for chunk in abstraction.chunks_mut(self.channels()) {
             chunk.sort();
         }
     }
 
-    pub fn abstraction(&self) -> Vec<usize> {
-        let mut result = vec![0; self.abstraction_len()];
-        self.write_abstraction_into(&mut result);
+    pub fn abstraction(&self) -> AVec<u16> {
+        let mut result = repeat(0).take(self.abstraction_len()).collect::<AVec<_>>();
+
+        self.write_abstraction_into(&mut result[..]);
+
         result
     }
 }
