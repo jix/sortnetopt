@@ -10,6 +10,7 @@ use sortnetopt::{
         index::{Lower, OutputSetIndex},
         OutputSet, MAX_CHANNELS,
     },
+    search::Search,
 };
 
 #[derive(Debug, StructOpt)]
@@ -24,10 +25,17 @@ struct Opt {
 #[derive(Debug, StructOpt)]
 enum OptCommand {
     Search(OptSearch),
+    Gnp(OptGnp),
 }
 
 #[derive(Debug, StructOpt)]
 struct OptSearch {
+    /// Number of channels in the sorting network
+    channels: usize,
+}
+
+#[derive(Debug, StructOpt)]
+struct OptGnp {
     /// Number of channels in the sorting network
     channels: usize,
     /// Dump index trees as graphviz graph
@@ -41,10 +49,19 @@ fn main() {
 
     match opt.command {
         OptCommand::Search(opt) => cmd_search(opt),
+        OptCommand::Gnp(opt) => cmd_gnp(opt),
     }
 }
 
 fn cmd_search(opt: OptSearch) {
+    log::info!("options: {:?}", opt);
+
+    let initial = OutputSet::all_values(opt.channels);
+
+    log::info!("result = {}", Search::search(initial.as_ref()));
+}
+
+fn cmd_gnp(opt: OptGnp) {
     log::info!("options: {:?}", opt);
 
     assert!(opt.channels <= MAX_CHANNELS);

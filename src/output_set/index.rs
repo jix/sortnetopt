@@ -240,7 +240,7 @@ impl<Dir: IndexDirection> OutputSetIndex<Dir> {
         output_set: OutputSet<&[bool]>,
         abstraction: &[u16],
         value: u8,
-    ) {
+    ) -> u8 {
         let best_so_far = self.lookup_with_abstraction(output_set, abstraction);
 
         let mut bitmap = repeat(false).take(1 << self.channels).collect::<BVec<_>>();
@@ -249,7 +249,7 @@ impl<Dir: IndexDirection> OutputSetIndex<Dir> {
         let mut updated_in_place = false;
 
         if !Dir::does_improve(best_so_far, value) {
-            return;
+            return best_so_far.unwrap();
         }
 
         let mut node_filter =
@@ -319,7 +319,7 @@ impl<Dir: IndexDirection> OutputSetIndex<Dir> {
         }
 
         if updated_in_place {
-            return;
+            return value;
         }
 
         let old_size = self.packed.len();
@@ -360,6 +360,8 @@ impl<Dir: IndexDirection> OutputSetIndex<Dir> {
 
             self.trees.push(tree);
         }
+
+        value
     }
 
     pub fn for_each(&self, mut action: impl FnMut(OutputSet<&[bool]>, &[u16], u8)) {

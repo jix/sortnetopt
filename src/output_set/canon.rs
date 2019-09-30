@@ -161,26 +161,28 @@ impl Canonicalize {
     }
 
     pub fn canonicalize(&mut self) -> (OutputSet<&[bool]>, Perm) {
-        self.initialize_partitions();
+        if self.used_channels > 0 {
+            self.initialize_partitions();
 
-        loop {
-            self.prune_using_fingerprints();
-            let mut prune = false;
-            while self.move_singleton() {
-                prune = true;
+            loop {
+                self.prune_using_fingerprints();
+                let mut prune = false;
+                while self.move_singleton() {
+                    prune = true;
+                }
+                if prune {
+                    self.prune(true);
+                }
+                if self.fixed == self.used_channels {
+                    break;
+                }
+                self.individualize();
+                self.prune(false);
+                if self.fixed == self.used_channels {
+                    break;
+                }
+                self.refine();
             }
-            if prune {
-                self.prune(true);
-            }
-            if self.fixed == self.used_channels {
-                break;
-            }
-            self.individualize();
-            self.prune(false);
-            if self.fixed == self.used_channels {
-                break;
-            }
-            self.refine();
         }
 
         let index = self.layer[0];

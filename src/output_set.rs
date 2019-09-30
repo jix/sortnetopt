@@ -72,6 +72,14 @@ impl OutputSet {
         }
     }
 
+    pub fn all_values_bvec(channels: usize) -> OutputSet<BVec<bool>> {
+        debug_assert!(channels <= MAX_CHANNELS);
+        OutputSet {
+            channels,
+            bitmap: repeat(true).take(1 << channels).collect(),
+        }
+    }
+
     pub fn packed_len_for_channels(channels: usize) -> usize {
         ((1 << channels) + 7) / 8
     }
@@ -117,6 +125,15 @@ where
         }
     }
 
+    pub fn to_owned_bvec(&self) -> OutputSet<BVec<bool>> {
+        let mut bitmap = BVec::new();
+        bitmap.try_extend_from_slice(self.bitmap()).unwrap();
+        OutputSet {
+            channels: self.channels,
+            bitmap,
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.bitmap().iter().map(|&present| present as usize).sum()
     }
@@ -132,6 +149,10 @@ where
     }
 
     pub fn is_sorted(&self) -> bool {
+        if self.channels() < 2 {
+            return true;
+        }
+
         let mut already_present: WVec<bool> =
             repeat(false).take(self.channels + 1).collect::<WVec<_>>();
 
@@ -410,6 +431,67 @@ where
 
         result
     }
+
+    pub fn channel_is_extremal(&self, polarity: bool, channel: usize) -> bool {
+        let bitmap = self.bitmap();
+        let all_mask = bitmap.len() - 1;
+        let mask = 1 << channel;
+        let index = mask ^ (all_mask * polarity as usize);
+
+        bitmap[index]
+    }
+
+    pub fn prune_extremal_channel_into(
+        &self,
+        polarity: bool,
+        channel: usize,
+        mut target: OutputSet<&mut [bool]>,
+    ) {
+        assert_eq!(target.channels() + 1, self.channels());
+
+        let target_bitmap = target.bitmap_mut();
+
+        for value in target_bitmap.iter_mut() {
+            *value = false;
+        }
+
+        let mut queue = BVec::<u16>::new();
+
+        let bitmap = self.bitmap();
+        let all_mask = bitmap.len() - 1;
+        let mask = 1 << channel;
+        let flip = all_mask * polarity as usize;
+        let index = mask ^ flip;
+
+        assert!(bitmap[index]);
+
+        let new_all_mask = all_mask >> 1;
+
+        let mask_low = mask - 1;
+        let mask_high = new_all_mask ^ mask_low;
+
+        let new_flip = new_all_mask * polarity as usize;
+
+        queue.push(mask as u16);
+        target_bitmap[new_flip] = true;
+
+        while let Some(index) = queue.pop() {
+            let index = index as usize;
+            let mut bit = 1;
+            for _ in 0..self.channels() {
+                let next = index | bit;
+
+                let next_target = ((next & mask_low) | ((next >> 1) & mask_high)) ^ new_flip;
+
+                if bitmap[next ^ flip] & !target_bitmap[next_target] {
+                    target_bitmap[next_target] = true;
+                    queue.push(next as u16);
+                }
+
+                bit <<= 1;
+            }
+        }
+    }
 }
 
 impl<Bitmap> OutputSet<Bitmap>
@@ -632,5 +714,40 @@ mod test {
             }
             assert!(output_set.is_sorted());
         }
+    }
+
+    #[test]
+    fn prune_extremal_channel() {
+        let mut output_set_large = OutputSet::all_values(11);
+        let mut output_set_small = OutputSet::all_values(10);
+        let mut output_set_ref = OutputSet::all_values(10);
+
+        output_set_large.prune_extremal_channel_into(false, 0, output_set_small.as_mut());
+        assert_eq!(output_set_small, output_set_ref);
+
+        output_set_large.apply_comparator([0, 1]);
+        output_set_large.prune_extremal_channel_into(false, 0, output_set_small.as_mut());
+        assert_eq!(output_set_small, output_set_ref);
+
+        output_set_large.apply_comparator([2, 3]);
+        output_set_ref.apply_comparator([1, 2]);
+        output_set_large.prune_extremal_channel_into(false, 0, output_set_small.as_mut());
+        assert_eq!(output_set_small, output_set_ref);
+
+        let mut output_set_large = OutputSet::all_values(11);
+        let mut output_set_small = OutputSet::all_values(10);
+        let mut output_set_ref = OutputSet::all_values(10);
+
+        output_set_large.prune_extremal_channel_into(true, 1, output_set_small.as_mut());
+        assert_eq!(output_set_small, output_set_ref);
+
+        output_set_large.apply_comparator([0, 1]);
+        output_set_large.prune_extremal_channel_into(true, 1, output_set_small.as_mut());
+        assert_eq!(output_set_small, output_set_ref);
+
+        output_set_large.apply_comparator([2, 3]);
+        output_set_ref.apply_comparator([1, 2]);
+        output_set_large.prune_extremal_channel_into(true, 1, output_set_small.as_mut());
+        assert_eq!(output_set_small, output_set_ref);
     }
 }
