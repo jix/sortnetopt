@@ -104,8 +104,8 @@ impl Search {
         }
 
         if new_bounds[1] < bounds[1] {
-            improved = true;
             bounds[1] = upper_index.insert_with_abstraction(output_set, abstraction, new_bounds[1]);
+            improved |= bounds[0] == bounds[1];
         }
 
         assert!(bounds[0] <= bounds[1]);
@@ -248,10 +248,16 @@ impl Search {
             .filter(|&pruned_id| {
                 pruned_sets[pruned_id].bounds[0] != pruned_sets[pruned_id].bounds[1]
             })
-            .map(|pruned_id| Reverse((pruned_sets[pruned_id].bounds[0], pruned_id)))
+            .map(|pruned_id| {
+                Reverse((
+                    pruned_sets[pruned_id].output_set.len(),
+                    pruned_sets[pruned_id].bounds[0],
+                    pruned_id,
+                ))
+            })
             .collect::<BinaryHeap<_>>();
 
-        while let Some(Reverse((_, pruned_id))) = active_pruned_heap.pop() {
+        while let Some(Reverse((pruned_set_len, _, pruned_id))) = active_pruned_heap.pop() {
             let pruned_set = &mut pruned_sets[pruned_id];
 
             if !pruned_set
@@ -270,7 +276,7 @@ impl Search {
             );
 
             if pruned_set.bounds[0] != pruned_set.bounds[1] {
-                active_pruned_heap.push(Reverse((pruned_set.bounds[0], pruned_id)));
+                active_pruned_heap.push(Reverse((pruned_set_len, pruned_set.bounds[0], pruned_id)));
             }
 
             let mut max_huffman_lower_bound = 0;
