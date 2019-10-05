@@ -1,6 +1,8 @@
+use std::{collections::BTreeMap, mem::transmute};
+
 use arrayref::array_ref;
 
-use crate::{dense_map::DenseMap, output_set::OutputSet};
+use crate::output_set::OutputSet;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct State {
@@ -8,42 +10,30 @@ pub struct State {
     pub huffman_bounds: [u8; 2],
 }
 
-impl State {
-    pub fn encode(&self) -> [u8; 4] {
-        [
-            self.bounds[0],
-            self.bounds[1],
-            self.huffman_bounds[0],
-            self.huffman_bounds[1],
-        ]
-    }
-
-    pub fn decode(encoded: &[u8; 4]) -> Self {
-        Self {
-            bounds: *array_ref!(encoded, 0, 2),
-            huffman_bounds: *array_ref!(encoded, 2, 2),
-        }
-    }
-}
-
+#[derive(Default)]
 pub struct StateMap {
-    by_channels: Vec<DenseMap>,
+    states_3_channels: BTreeMap<[u8; 1 << 0], State>,
+    states_4_channels: BTreeMap<[u8; 1 << 1], State>,
+    states_5_channels: BTreeMap<[u8; 1 << 2], State>,
+    states_6_channels: BTreeMap<[u8; 1 << 3], State>,
+    states_7_channels: BTreeMap<[u8; 1 << 4], State>,
+    states_8_channels: BTreeMap<[u8; 1 << 5], State>,
+    states_9_channels: BTreeMap<[[u8; 1 << 5]; 1 << 1], State>,
+    states_10_channels: BTreeMap<[[u8; 1 << 5]; 1 << 2], State>,
+    states_11_channels: BTreeMap<[[u8; 1 << 5]; 1 << 3], State>,
 }
 
 impl StateMap {
-    pub fn new(max_channels: usize) -> Self {
-        Self {
-            by_channels: (3..=max_channels)
-                .map(|channels| DenseMap::new(OutputSet::packed_len_for_channels(channels), 4))
-                .collect(),
-        }
-    }
-
     pub fn len(&self) -> usize {
-        self.by_channels
-            .iter()
-            .map(|by_channels| by_channels.len())
-            .sum()
+        self.states_3_channels.len()
+            + self.states_4_channels.len()
+            + self.states_5_channels.len()
+            + self.states_6_channels.len()
+            + self.states_7_channels.len()
+            + self.states_8_channels.len()
+            + self.states_9_channels.len()
+            + self.states_10_channels.len()
+            + self.states_11_channels.len()
     }
 
     pub fn get(&self, output_set: OutputSet<&[bool]>) -> State {
@@ -62,8 +52,33 @@ impl StateMap {
                 huffman_bounds: [1, 1],
             }
         } else {
-            if let Some(encoded) = self.by_channels[output_set.channels() - 3].get(&packed) {
-                State::decode(array_ref![encoded, 0, 4])
+            let lookup = match output_set.channels() {
+                3 => self.states_3_channels.get(array_ref!(packed, 0, 1 << 0)),
+                4 => self.states_4_channels.get(array_ref!(packed, 0, 1 << 1)),
+                5 => self.states_5_channels.get(array_ref!(packed, 0, 1 << 2)),
+                6 => self.states_6_channels.get(array_ref!(packed, 0, 1 << 3)),
+                7 => self.states_7_channels.get(array_ref!(packed, 0, 1 << 4)),
+                8 => self.states_8_channels.get(array_ref!(packed, 0, 1 << 5)),
+
+                9 => self
+                    .states_9_channels
+                    .get(unsafe { &transmute::<_, [_; 1 << 1]>(*array_ref!(packed, 0, 1 << 6)) }),
+                10 => self
+                    .states_10_channels
+                    .get(unsafe { &transmute::<_, [_; 1 << 2]>(*array_ref!(packed, 0, 1 << 7)) }),
+                11 => self
+                    .states_11_channels
+                    .get(unsafe { &transmute::<_, [_; 1 << 3]>(*array_ref!(packed, 0, 1 << 8)) }),
+                _ => unreachable!(),
+            };
+
+            // Works around vscode's broken syntax highlighting
+            let _ignored: [(); 0 >> 1] = [];
+            let _ignored: [(); 0 >> 1] = [];
+            let _ignored: [(); 0 >> 1] = [];
+
+            if let Some(&state) = lookup {
+                state
             } else {
                 let quadratic_bound = (output_set.channels() * (output_set.channels() - 1)) / 2;
 
@@ -84,11 +99,47 @@ impl StateMap {
 
     pub fn set(&mut self, output_set: OutputSet<&[bool]>, state: State) {
         assert!(output_set.channels() > 2);
-        let packed = output_set.packed_pvec();
-        let encoded = state.encode();
 
-        self.by_channels[output_set.channels() - 3]
-            .get_mut_or_insert(&packed, &encoded)
-            .copy_from_slice(&encoded);
+        let packed = output_set.packed_pvec();
+
+        match output_set.channels() {
+            3 => self
+                .states_3_channels
+                .insert(*array_ref!(packed, 0, 1 << 0), state),
+            4 => self
+                .states_4_channels
+                .insert(*array_ref!(packed, 0, 1 << 1), state),
+            5 => self
+                .states_5_channels
+                .insert(*array_ref!(packed, 0, 1 << 2), state),
+            6 => self
+                .states_6_channels
+                .insert(*array_ref!(packed, 0, 1 << 3), state),
+            7 => self
+                .states_7_channels
+                .insert(*array_ref!(packed, 0, 1 << 4), state),
+            8 => self
+                .states_8_channels
+                .insert(*array_ref!(packed, 0, 1 << 5), state),
+
+            9 => self.states_9_channels.insert(
+                unsafe { transmute::<_, [_; 1 << 1]>(*array_ref!(packed, 0, 1 << 6)) },
+                state,
+            ),
+            10 => self.states_10_channels.insert(
+                unsafe { transmute::<_, [_; 1 << 2]>(*array_ref!(packed, 0, 1 << 7)) },
+                state,
+            ),
+            11 => self.states_11_channels.insert(
+                unsafe { transmute::<_, [_; 1 << 3]>(*array_ref!(packed, 0, 1 << 8)) },
+                state,
+            ),
+            _ => unreachable!(),
+        };
+
+        // Works around vscode's broken syntax highlighting
+        let _ignored: [(); 0 >> 1] = [];
+        let _ignored: [(); 0 >> 1] = [];
+        let _ignored: [(); 0 >> 1] = [];
     }
 }

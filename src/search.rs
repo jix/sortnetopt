@@ -19,7 +19,7 @@ pub struct Search {
 impl Search {
     pub fn search(initial: OutputSet<&[bool]>) -> usize {
         let mut search = Self {
-            states: StateMap::new(initial.channels()),
+            states: StateMap::default(),
             counter: 0,
             last_status: Instant::now(),
         };
@@ -121,7 +121,7 @@ impl Search {
 
         for i in 0..output_set.channels() {
             for j in 0..i {
-                let mut successor = output_set.to_owned_bvec();
+                let mut successor = output_set.to_owned();
                 if successor.apply_comparator([i, j]) {
                     successor.canonicalize(true);
                     successors.push(successor);
@@ -219,7 +219,7 @@ impl Search {
             .enumerate()
         {
             for &channel in pol_channels.iter() {
-                let mut pruned_output_set = OutputSet::all_values_bvec(output_set.channels() - 1);
+                let mut pruned_output_set = OutputSet::all_values(output_set.channels() - 1);
                 output_set.prune_extremal_channel_into(
                     pol > 0,
                     channel,
