@@ -377,13 +377,44 @@ where
     }
 
     pub fn pack_into_slice(&self, slice: &mut [u8]) {
-        use bitvec::prelude::*;
+        let bitmap = self.bitmap();
 
-        let bits = BitSlice::<LittleEndian, u8>::from_slice_mut(slice);
+        let mut byte_chunks = bitmap.chunks_exact(8);
+        let mut target_bytes = slice.iter_mut();
 
-        for (index, &value) in self.bitmap().iter().enumerate() {
-            bits.set(index, value);
+        for (byte_chunk, target_byte) in (&mut byte_chunks).zip(&mut target_bytes) {
+            unsafe {
+                *target_byte = (*byte_chunk.get_unchecked(0) as u8)
+                    | ((*byte_chunk.get_unchecked(1) as u8) << 1)
+                    | ((*byte_chunk.get_unchecked(2) as u8) << 2)
+                    | ((*byte_chunk.get_unchecked(3) as u8) << 3)
+                    | ((*byte_chunk.get_unchecked(4) as u8) << 4)
+                    | ((*byte_chunk.get_unchecked(5) as u8) << 5)
+                    | ((*byte_chunk.get_unchecked(6) as u8) << 6)
+                    | ((*byte_chunk.get_unchecked(7) as u8) << 7);
+            }
         }
+
+        let remainder = byte_chunks.remainder();
+        if !remainder.is_empty() {
+            let target_byte = target_bytes.next().unwrap();
+            *target_byte = (remainder.get(0).cloned().unwrap_or(false) as u8)
+                | ((remainder.get(1).cloned().unwrap_or(false) as u8) << 1)
+                | ((remainder.get(2).cloned().unwrap_or(false) as u8) << 2)
+                | ((remainder.get(3).cloned().unwrap_or(false) as u8) << 3)
+                | ((remainder.get(4).cloned().unwrap_or(false) as u8) << 4)
+                | ((remainder.get(5).cloned().unwrap_or(false) as u8) << 5)
+                | ((remainder.get(6).cloned().unwrap_or(false) as u8) << 6)
+                | ((remainder.get(7).cloned().unwrap_or(false) as u8) << 7);
+        }
+    }
+
+    pub fn packed_pvec(&self) -> PVec<u8> {
+        let mut result = repeat(0).take(self.packed_len()).collect::<PVec<_>>();
+
+        self.pack_into_slice(&mut result[..]);
+
+        result
     }
 
     pub fn abstraction_len(&self) -> usize {
