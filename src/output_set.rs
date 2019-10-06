@@ -417,6 +417,14 @@ where
         result
     }
 
+    pub fn packed(&self) -> Vec<u8> {
+        let mut result = repeat(0).take(self.packed_len()).collect::<Vec<_>>();
+
+        self.pack_into_slice(&mut result[..]);
+
+        result
+    }
+
     pub fn abstraction_len(&self) -> usize {
         OutputSet::abstraction_len_for_channels(self.channels())
     }

@@ -1,65 +1,110 @@
 use std::{
     cmp::Reverse,
-    collections::BinaryHeap,
-    rc::Rc,
+    collections::{hash_map::Entry, BinaryHeap},
+    pin::Pin,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
+use async_std::{prelude::*, task, task::sleep};
+use futures::{pending, poll, task::Poll};
 use rustc_hash::FxHashMap as HashMap;
 
 mod states;
 
 use states::{State, StateMap};
 
-use crate::output_set::{CVec, OutputSet};
+use crate::{
+    output_set::{CVec, OutputSet},
+    thread_pool::{Handle, Schedule, ThreadPool},
+};
 
 pub struct Search {
     states: StateMap,
-    counter: usize,
-    last_status: Instant,
 }
 
 impl Search {
     pub fn search(initial: OutputSet<&[bool]>) -> usize {
-        let mut search = Self {
+        let search = Self {
             states: StateMap::default(),
-            counter: 0,
-            last_status: Instant::now(),
         };
 
         let mut initial = initial.to_owned_bvec();
 
         initial.canonicalize(true);
 
-        let mut state = search.states.get(initial.as_ref());
-        loop {
-            if state.bounds[0] == state.bounds[1] {
-                search.log_stats();
-                return state.bounds[0] as usize;
-            }
-            state = search.improve(initial.as_ref());
-            log::info!("bounds: {:?}", state);
-            search.log_stats();
-        }
+        ThreadPool::scope(|pool| {
+            let _info_thread = pool.spawn(Box::pin(async {
+                let mut last_msg = Instant::now();
+                loop {
+                    let next_msg = last_msg + Duration::from_secs(10);
+                    let sleep_for = next_msg.saturating_duration_since(Instant::now());
+                    last_msg = next_msg;
+                    sleep(sleep_for).await;
+                    search.log_stats();
+                }
+            }));
+
+            let main_loop = pool.spawn(Box::pin(async {
+                let mut state = search.states.get(initial.as_ref());
+                loop {
+                    if state.bounds[0] == state.bounds[1] {
+                        break state.bounds[0] as usize;
+                    }
+                    state = search.improve(pool, 0, state, initial.as_ref()).await;
+                    log::info!("bounds: {:?}", state);
+                    search.log_stats();
+                }
+            }));
+
+            task::block_on(main_loop)
+        })
     }
 
     fn log_stats(&self) {
         log::info!("states: {:?}", self.states.len());
     }
 
-    fn improve(&mut self, output_set: OutputSet<&[bool]>) -> State {
-        self.counter += 1;
-        if self.counter == 100 {
-            self.counter = 0;
-            let interval = Duration::from_secs(10);
-            if self.last_status.elapsed() > interval {
-                self.log_stats();
-                self.last_status += interval
+    fn improve_boxed<'a>(
+        &'a self,
+        pool: &'a ThreadPool,
+        level: usize,
+        previous_state: State,
+        output_set: OutputSet,
+    ) -> Pin<Box<dyn Future<Output = State> + Send + 'a>> {
+        Box::pin(async move {
+            self.improve(pool, level, previous_state, output_set.as_ref())
+                .await
+        })
+    }
+
+    #[allow(unreachable_code)]
+    async fn improve(
+        &self,
+        pool: &ThreadPool,
+        level: usize,
+        previous_state: State,
+        output_set: OutputSet<&[bool]>,
+    ) -> State {
+        let _locked = loop {
+            let state = self.states.get(output_set);
+            if state != previous_state {
+                return state;
             }
-        }
+            if state.bounds[0] == state.bounds[1] {
+                return state;
+            }
+
+            if let Some(locked) = self.states.lock(output_set).await {
+                break locked;
+            }
+        };
 
         let mut state = self.states.get(output_set);
 
+        if state != previous_state {
+            return state;
+        }
         if state.bounds[0] == state.bounds[1] {
             return state;
         }
@@ -76,7 +121,7 @@ impl Search {
 
         for (pol, pol_channels) in extremal_channels.iter().enumerate() {
             if pol_channels.len() == 1 {
-                let mut pruned_output_set = OutputSet::all_values_bvec(output_set.channels() - 1);
+                let mut pruned_output_set = OutputSet::all_values(output_set.channels() - 1);
                 output_set.prune_extremal_channel_into(
                     pol > 0,
                     pol_channels[0],
@@ -108,13 +153,15 @@ impl Search {
                         return state;
                     }
 
-                    pruned_state = self.improve(pruned_output_set.as_ref());
+                    pruned_state = self
+                        .improve_boxed(pool, level, pruned_state, pruned_output_set.clone())
+                        .await;
                 }
             }
         }
 
         while state.huffman_bounds[1] > state.bounds[0] {
-            let new_state = self.improve_huffman(output_set);
+            let new_state = self.improve_huffman(pool, level, output_set).await;
             if new_state.bounds[0] > state.bounds[0] {
                 return new_state;
             }
@@ -160,11 +207,18 @@ impl Search {
                 return state;
             }
 
-            edges.improve_next(self);
+            edges
+                .improve_next(self, pool, level + 1, Some(state.bounds[0]))
+                .await;
         }
     }
 
-    fn improve_huffman(&mut self, output_set: OutputSet<&[bool]>) -> State {
+    async fn improve_huffman(
+        &self,
+        pool: &ThreadPool,
+        level: usize,
+        output_set: OutputSet<&[bool]>,
+    ) -> State {
         let mut state = self.states.get(output_set);
 
         if state.huffman_bounds[1] <= state.bounds[0] {
@@ -217,9 +271,7 @@ impl Search {
                     let upper_huffman_bound = max_plus_1_huffman(&upper_bounds);
 
                     if upper_huffman_bound <= state.bounds[0] {
-                        edges
-                            .active_ids
-                            .retain(|id| pruned_ids[1 - pol].contains(id));
+                        edges.retain_edges(|id| pruned_ids[1 - pol].contains(&id));
                     }
 
                     upper_huffman_bounds[pol] = upper_huffman_bound;
@@ -243,7 +295,7 @@ impl Search {
                 self.states.set(output_set, state);
             }
 
-            edges.improve_next(self);
+            edges.improve_next(self, pool, level + 1, None).await;
         }
 
         state
@@ -252,63 +304,164 @@ impl Search {
 
 #[derive(Default)]
 struct Edges {
-    target_to_id: HashMap<Rc<OutputSet>, usize>,
-    targets: Vec<(Rc<OutputSet>, State, usize)>,
+    target_to_id: HashMap<Arc<OutputSet>, usize>,
+    targets: Vec<EdgeTarget>,
     active_ids: Vec<usize>,
+}
+
+struct EdgeTarget {
+    output_set: Arc<OutputSet>,
+    state: State,
+    len: usize,
+    running: Option<(Handle<State>, Schedule)>,
 }
 
 impl Edges {
     fn add_edge(&mut self, search: &Search, target: OutputSet) -> usize {
-        let target = Rc::new(target);
+        let target = Arc::new(target);
 
         let targets = &mut self.targets;
         let active_ids = &mut self.active_ids;
-        *self.target_to_id.entry(target.clone()).or_insert_with(|| {
-            let id = targets.len();
-            let state = search.states.get(target.as_ref().as_ref());
-            let len = target.len();
-            targets.push((target, state, len));
-            if state.bounds[0] != state.bounds[1] {
-                active_ids.push(id);
+        match self.target_to_id.entry(target.clone()) {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => {
+                let id = targets.len();
+                let state = search.states.get(target.as_ref().as_ref());
+                let len = target.len();
+                targets.push(EdgeTarget {
+                    output_set: target,
+                    state,
+                    len,
+                    running: None,
+                });
+                if state.bounds[0] != state.bounds[1] {
+                    active_ids.push(id);
+                }
+                entry.insert(id);
+                id
             }
-            id
-        })
+        }
     }
 
     fn states<'a>(&'a self) -> impl Iterator<Item = State> + 'a {
-        self.targets.iter().map(|(_, state, _)| *state)
+        self.targets.iter().map(|target| target.state)
     }
 
     fn state(&self, id: usize) -> State {
-        let (_, state, _) = self.targets[id];
-        state
+        self.targets[id].state
     }
 
-    fn sort_key(&self, id: usize) -> (u8, usize, u8) {
-        let (_, state, len) = &self.targets[id];
-
-        (state.bounds[0], *len, state.bounds[1])
+    fn retain_edges(&mut self, mut should_retain: impl FnMut(usize) -> bool) {
+        let targets = &mut self.targets;
+        self.active_ids.retain(move |&id| {
+            let retain = should_retain(id);
+            if !retain {
+                targets[id].running = None;
+            }
+            retain
+        })
     }
 
-    fn improve_next(&mut self, search: &mut Search) -> bool {
-        for i in (1..self.active_ids.len()).rev() {
-            if self.sort_key(self.active_ids[i]) < self.sort_key(self.active_ids[i - 1]) {
-                self.active_ids.swap(i, i - 1);
-            }
-        }
+    #[allow(unreachable_code)]
+    async fn improve_next(
+        &mut self,
+        search: &Search,
+        pool: &ThreadPool,
+        level: usize,
+        order: Option<u8>,
+    ) {
+        let targets = &mut self.targets;
 
-        if self.active_ids.is_empty() {
-            false
-        } else {
-            // TODO allow work stealing
-            let id = self.active_ids[0];
-            let (output_set, state, _len) = &mut self.targets[id];
-            *state = search.improve(output_set.as_ref().as_ref());
+        let mut block = false;
 
-            if state.bounds[0] == state.bounds[1] {
-                self.active_ids.swap_remove(0);
+        loop {
+            let mut finished = false;
+
+            let mut num_running = 0;
+
+            for &id in self.active_ids.iter() {
+                let target = &mut targets[id];
+
+                if let Some((handle, schedule)) = target.running.as_mut() {
+                    if let Poll::Ready(new_state) = poll!(handle) {
+                        target.state = new_state;
+                        target.running = None;
+                        finished = true;
+                    } else if schedule.is_scheduled() {
+                        num_running += 1;
+                    }
+                }
             }
-            true
+
+            self.active_ids.retain(|&id| {
+                let state = targets[id].state;
+                let retain = state.bounds[0] != state.bounds[1];
+                if !retain {
+                    assert!(targets[id].running.is_none());
+                }
+                retain
+            });
+
+            if finished || self.active_ids.is_empty() {
+                return;
+            }
+
+            if block && num_running > 0 {
+                pending!();
+            }
+
+            block = true;
+
+            if let Some(limit) = order {
+                self.active_ids.sort_by_key(|&id| {
+                    let target = &targets[id];
+
+                    (
+                        target.state.bounds[0] >= limit,
+                        target.len,
+                        target.state.bounds[0],
+                        target.state.bounds[1],
+                    )
+                });
+            } else {
+                self.active_ids.sort_by_key(|&id| {
+                    let target = &targets[id];
+
+                    (target.state.bounds[0], target.len, target.state.bounds[1])
+                });
+            }
+
+            for (index, &id) in self.active_ids.iter().enumerate() {
+                let target = &mut targets[id];
+                if target.running.is_none() {
+                    block = false;
+                    assert_ne!(target.state.bounds[0], target.state.bounds[1]);
+
+                    let (handle, schedule) = pool.spawn_delayed(search.improve_boxed(
+                        pool,
+                        level,
+                        target.state,
+                        target.output_set.as_ref().clone(),
+                    ));
+                    if index != 0 {
+                        if let Some(limit) = order {
+                            if target.state.bounds[0] < limit {
+                                pool.add_pending(
+                                    level,
+                                    target.len,
+                                    target.state.bounds[0],
+                                    &schedule,
+                                );
+                            }
+                        }
+                    }
+                    target.running = Some((handle, schedule));
+                }
+
+                if index == 0 {
+                    target.running.as_ref().unwrap().1.schedule();
+                }
+            }
         }
     }
 }
