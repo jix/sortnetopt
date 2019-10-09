@@ -50,7 +50,7 @@ fn get_mem_usage() -> (usize, &'static str) {
         let usage_kb = str::parse::<usize>(&usage_kb_str[..usage_kb_str.len() - 3]).unwrap();
 
         if usage_kb > 10 * 1024 * 1024 {
-            return (usage_kb / 1024 * 1024, "G");
+            return (usage_kb / (1024 * 1024), "G");
         } else if usage_kb > 10 * 1024 {
             return (usage_kb / 1024, "M");
         } else {
