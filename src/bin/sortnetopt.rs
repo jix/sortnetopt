@@ -1,6 +1,8 @@
 #[global_allocator]
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
+use std::path::PathBuf;
+
 use rustc_hash::FxHashSet as HashSet;
 use structopt::StructOpt;
 
@@ -32,6 +34,10 @@ enum OptCommand {
 struct OptSearch {
     /// Number of channels in the sorting network
     channels: usize,
+    #[structopt(parse(from_os_str))]
+    output: Option<PathBuf>,
+    #[structopt(short, long)]
+    limit: Option<usize>,
 }
 
 #[derive(Debug, StructOpt)]
@@ -58,7 +64,10 @@ fn cmd_search(opt: OptSearch) {
 
     let initial = OutputSet::all_values(opt.channels);
 
-    log::info!("result = {}", Search::search(initial.as_ref()));
+    log::info!(
+        "result = {}",
+        Search::search(initial.as_ref(), opt.limit, opt.output.clone())
+    );
 }
 
 fn cmd_gnp(opt: OptGnp) {

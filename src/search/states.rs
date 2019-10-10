@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     hash::{Hash, Hasher},
-    mem::transmute,
+    mem::{replace, transmute},
     sync::RwLock,
 };
 
@@ -142,6 +142,13 @@ impl StateMap {
             Err(unlock)
         }
     }
+
+    pub fn into_shards(self) -> Vec<OutputSetMap<State>> {
+        self.state_shards
+            .into_iter()
+            .map(|shard| shard.into_inner().unwrap())
+            .collect()
+    }
 }
 
 pub struct StateLock<'a> {
@@ -161,7 +168,7 @@ impl<'a> Drop for StateLock<'a> {
     }
 }
 
-struct OutputSetMap<T> {
+pub struct OutputSetMap<T> {
     states_3_channels: BTreeMap<[u8; 1 << 0], T>,
     states_4_channels: BTreeMap<[u8; 1 << 1], T>,
     states_5_channels: BTreeMap<[u8; 1 << 2], T>,
@@ -200,6 +207,83 @@ impl<T: Clone> OutputSetMap<T> {
             + self.states_9_channels.len()
             + self.states_10_channels.len()
             + self.states_11_channels.len()
+    }
+
+    pub fn drain_packed(&mut self) -> impl Iterator<Item = (usize, Vec<u8>, T)> {
+        let result = replace(&mut self.states_3_channels, Default::default())
+            .into_iter()
+            .map(|(packed, state)| (3, packed.as_ref().to_owned(), state))
+            .chain(
+                replace(&mut self.states_4_channels, Default::default())
+                    .into_iter()
+                    .map(|(packed, state)| (4, packed.as_ref().to_owned(), state)),
+            )
+            .chain(
+                replace(&mut self.states_5_channels, Default::default())
+                    .into_iter()
+                    .map(|(packed, state)| (5, packed.as_ref().to_owned(), state)),
+            )
+            .chain(
+                replace(&mut self.states_6_channels, Default::default())
+                    .into_iter()
+                    .map(|(packed, state)| (6, packed.as_ref().to_owned(), state)),
+            )
+            .chain(
+                replace(&mut self.states_7_channels, Default::default())
+                    .into_iter()
+                    .map(|(packed, state)| (7, packed.as_ref().to_owned(), state)),
+            )
+            .chain(
+                replace(&mut self.states_8_channels, Default::default())
+                    .into_iter()
+                    .map(|(packed, state)| (8, packed.as_ref().to_owned(), state)),
+            )
+            .chain(
+                replace(&mut self.states_9_channels, Default::default())
+                    .into_iter()
+                    .map(|(packed, state)| {
+                        (
+                            9,
+                            unsafe { transmute::<_, [u8; 1 << 6]>(packed) }
+                                .as_ref()
+                                .to_owned(),
+                            state,
+                        )
+                    }),
+            )
+            .chain(
+                replace(&mut self.states_10_channels, Default::default())
+                    .into_iter()
+                    .map(|(packed, state)| {
+                        (
+                            10,
+                            unsafe { transmute::<_, [u8; 1 << 7]>(packed) }
+                                .as_ref()
+                                .to_owned(),
+                            state,
+                        )
+                    }),
+            )
+            .chain(
+                replace(&mut self.states_11_channels, Default::default())
+                    .into_iter()
+                    .map(|(packed, state)| {
+                        (
+                            11,
+                            unsafe { transmute::<_, [u8; 1 << 8]>(packed) }
+                                .as_ref()
+                                .to_owned(),
+                            state,
+                        )
+                    }),
+            );
+
+        // Works around vscode's broken syntax highlighting
+        let _ignored: [(); 0 >> 1] = [];
+        let _ignored: [(); 0 >> 1] = [];
+        let _ignored: [(); 0 >> 1] = [];
+
+        result
     }
 
     pub fn get_with_packed(&self, channels: usize, packed: &[u8]) -> Option<T> {

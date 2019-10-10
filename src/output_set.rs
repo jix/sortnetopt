@@ -87,6 +87,12 @@ impl OutputSet {
     pub fn abstraction_len_for_channels(channels: usize) -> usize {
         channels * (channels - 1) * PAIR_ABSTRACTION_GROUPS
     }
+
+    pub fn from_packed(channels: usize, packed: &[u8]) -> Self {
+        let mut result = Self::all_values(channels);
+        result.unpack_from_slice(packed);
+        result
+    }
 }
 
 impl<Bitmap> OutputSet<Bitmap>
@@ -447,7 +453,7 @@ where
                 }
             }
             for group_values in groups.iter_mut() {
-                group_values.sort();
+                group_values.sort_unstable_by(|a, b| b.cmp(a));
             }
             for (group, group_values) in groups.iter().enumerate() {
                 for (index, &abstraction_value) in group_values.iter().enumerate() {
@@ -459,7 +465,18 @@ where
         }
 
         for chunk in abstraction.chunks_mut(self.channels()) {
-            chunk.sort();
+            chunk.sort_unstable();
+        }
+
+        for chunk in abstraction.chunks_mut(self.channels() * 4) {
+            let mut tmp = ArrayVec::<[u16; 64]>::new();
+            tmp.try_extend_from_slice(chunk).unwrap();
+
+            for i in 0..4 {
+                for j in 0..self.channels() {
+                    chunk[i + j * 4] = tmp[j + i * self.channels()];
+                }
+            }
         }
     }
 
@@ -622,12 +639,30 @@ where
     }
 
     pub fn unpack_from_slice(&mut self, slice: &[u8]) {
-        use bitvec::prelude::*;
+        let bitmap = self.bitmap_mut();
 
-        let bits = BitSlice::<LittleEndian, u8>::from_slice(slice);
+        let mut byte_chunks = bitmap.chunks_exact_mut(8);
+        let mut source_bytes = slice.iter();
 
-        for (index, value) in self.bitmap_mut().iter_mut().enumerate() {
-            *value = bits[index];
+        for (byte_chunk, source_byte) in (&mut byte_chunks).zip(&mut source_bytes) {
+            unsafe {
+                *byte_chunk.get_unchecked_mut(0) = source_byte & (1 << 0) != 0;
+                *byte_chunk.get_unchecked_mut(1) = source_byte & (1 << 1) != 0;
+                *byte_chunk.get_unchecked_mut(2) = source_byte & (1 << 2) != 0;
+                *byte_chunk.get_unchecked_mut(3) = source_byte & (1 << 3) != 0;
+                *byte_chunk.get_unchecked_mut(4) = source_byte & (1 << 4) != 0;
+                *byte_chunk.get_unchecked_mut(5) = source_byte & (1 << 5) != 0;
+                *byte_chunk.get_unchecked_mut(6) = source_byte & (1 << 6) != 0;
+                *byte_chunk.get_unchecked_mut(7) = source_byte & (1 << 7) != 0;
+            }
+        }
+
+        let remainder = byte_chunks.into_remainder();
+        if !remainder.is_empty() {
+            let source_byte = source_bytes.next().unwrap();
+            for (i, target_bit) in remainder.iter_mut().enumerate() {
+                *target_bit = source_byte & (1 << i) != 0
+            }
         }
     }
 
@@ -676,6 +711,28 @@ mod test {
         for (i, &comparator) in SORT_11.iter().enumerate() {
             assert!(!output_set.is_sorted());
             output_set.apply_comparator(comparator);
+            log::info!(
+                "step {}: histogram = {:?}",
+                i,
+                output_set.weight_histogram()
+            );
+        }
+
+        assert!(output_set.is_sorted());
+    }
+
+    #[test]
+    fn sort_11_pack_unpack() {
+        crate::logging::setup(false);
+
+        let mut output_set = OutputSet::all_values(11);
+
+        for (i, &comparator) in SORT_11.iter().enumerate() {
+            assert!(!output_set.is_sorted());
+            output_set.apply_comparator(comparator);
+            let unpacked = OutputSet::from_packed(11, &output_set.packed());
+            assert_eq!(output_set, unpacked);
+
             log::info!(
                 "step {}: histogram = {:?}",
                 i,

@@ -1,6 +1,9 @@
 use std::{
     cmp::Reverse,
     collections::{hash_map::Entry, BinaryHeap},
+    fs::{create_dir, File},
+    io::{self, BufWriter, ErrorKind, Write},
+    path::PathBuf,
     pin::Pin,
     sync::Arc,
     time::{Duration, Instant},
@@ -12,8 +15,7 @@ use rustc_hash::FxHashMap as HashMap;
 
 mod states;
 
-use states::{State, StateMap};
-
+use self::states::{State, StateMap};
 use crate::{
     output_set::{CVec, OutputSet},
     thread_pool::{Handle, Schedule, ThreadPool},
@@ -23,17 +25,25 @@ pub struct Search {
     states: StateMap,
 }
 
+type Prio = (usize, usize, u8);
+
 impl Search {
-    pub fn search(initial: OutputSet<&[bool]>) -> usize {
+    pub fn search(
+        initial: OutputSet<&[bool]>,
+        limit: Option<usize>,
+        output: Option<PathBuf>,
+    ) -> usize {
         let search = Self {
             states: StateMap::default(),
         };
 
         let mut initial = initial.to_owned_bvec();
 
+        let limit = limit.unwrap_or(usize::max_value());
+
         initial.canonicalize(true);
 
-        ThreadPool::scope(|pool| {
+        let final_bound = ThreadPool::scope(|pool| {
             let _info_thread = pool.spawn(Box::pin(async {
                 let mut last_msg = Instant::now();
                 loop {
@@ -48,7 +58,7 @@ impl Search {
             let main_loop = pool.spawn(Box::pin(async {
                 let mut state = search.states.get(initial.as_ref());
                 loop {
-                    if state.bounds[0] == state.bounds[1] {
+                    if state.bounds[0] == state.bounds[1] || state.bounds[0] as usize >= limit {
                         break state.bounds[0] as usize;
                     }
                     state = search.improve(pool, 0, state, initial.as_ref()).await;
@@ -58,7 +68,42 @@ impl Search {
             }));
 
             task::block_on(main_loop)
-        })
+        });
+
+        if let Some(output) = output {
+            search.dump_states(output).unwrap();
+        }
+
+        final_bound
+    }
+
+    fn dump_states(self, output: PathBuf) -> io::Result<()> {
+        match create_dir(&output) {
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => Ok(()),
+            res => res,
+        }?;
+
+        let mut index = BufWriter::new(File::create(output.join("index.txt"))?);
+
+        let mut group_files = HashMap::<(usize, u8), BufWriter<File>>::default();
+        for mut shard in self.states.into_shards() {
+            for (channels, packed, state) in shard.drain_packed() {
+                let group = (channels, state.bounds[0]);
+                let group_file = match group_files.entry(group) {
+                    Entry::Occupied(entry) => entry.into_mut(),
+                    Entry::Vacant(entry) => {
+                        let group_name = format!("group_{}_{}.bin", group.0, group.1);
+                        writeln!(&mut index, "{}", group_name)?;
+                        let group_file = BufWriter::new(File::create(output.join(group_name))?);
+                        entry.insert(group_file)
+                    }
+                };
+
+                group_file.write_all(&packed)?;
+            }
+        }
+
+        Ok(())
     }
 
     fn log_stats(&self) {
@@ -67,7 +112,7 @@ impl Search {
 
     fn improve_boxed<'a>(
         &'a self,
-        pool: &'a ThreadPool,
+        pool: &'a ThreadPool<Prio>,
         level: usize,
         previous_state: State,
         output_set: OutputSet,
@@ -81,7 +126,7 @@ impl Search {
     #[allow(unreachable_code)]
     async fn improve(
         &self,
-        pool: &ThreadPool,
+        pool: &ThreadPool<Prio>,
         level: usize,
         previous_state: State,
         output_set: OutputSet<&[bool]>,
@@ -215,7 +260,7 @@ impl Search {
 
     async fn improve_huffman(
         &self,
-        pool: &ThreadPool,
+        pool: &ThreadPool<Prio>,
         level: usize,
         output_set: OutputSet<&[bool]>,
     ) -> State {
@@ -366,7 +411,7 @@ impl Edges {
     async fn improve_next(
         &mut self,
         search: &Search,
-        pool: &ThreadPool,
+        pool: &ThreadPool<Prio>,
         level: usize,
         order: Option<u8>,
     ) {
@@ -447,9 +492,7 @@ impl Edges {
                         if let Some(limit) = order {
                             if target.state.bounds[0] < limit {
                                 pool.add_pending(
-                                    level,
-                                    target.len,
-                                    target.state.bounds[0],
+                                    (level, target.len, target.state.bounds[0]),
                                     &schedule,
                                 );
                             }

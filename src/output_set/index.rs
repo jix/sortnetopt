@@ -7,6 +7,7 @@ mod tree;
 use tree::{Augmentation, TraversalMut, Tree};
 
 pub enum Lower {}
+pub enum LowerInvert {}
 
 pub enum Upper {}
 
@@ -90,6 +91,76 @@ impl IndexDirection for Lower {
 
     fn test_precise(candidate: OutputSet<&[bool]>, lookup: OutputSet<&[bool]>) -> bool {
         candidate.subsumes_permuted(lookup)
+    }
+}
+
+impl IndexDirection for LowerInvert {
+    fn lookup_dir() -> bool {
+        true
+    }
+
+    fn can_improve(best_so_far: Option<u8>, range: [u8; 2]) -> bool {
+        if let Some(best_so_far) = best_so_far {
+            range[1] > best_so_far
+        } else {
+            true
+        }
+    }
+
+    fn does_improve(best_so_far: Option<u8>, value: u8) -> bool {
+        if let Some(best_so_far) = best_so_far {
+            value > best_so_far
+        } else {
+            true
+        }
+    }
+
+    fn can_be_updated(range: [u8; 2], value: u8) -> bool {
+        range[0] <= value
+    }
+
+    fn would_be_updated(candidate_value: u8, lookup_value: u8) -> bool {
+        candidate_value <= lookup_value
+    }
+
+    fn test_abstraction_range(candidate_range: &[[u16; 2]], lookup: &[u16]) -> bool {
+        (0..2).any(|invert| {
+            let mask = invert * 3;
+            candidate_range
+                .iter()
+                .enumerate()
+                .all(|(i, candidate)| candidate[0] <= lookup[i ^ mask])
+        })
+    }
+
+    fn test_abstraction_range_update(candidate_range: &[[u16; 2]], lookup: &[u16]) -> bool {
+        (0..2).any(|invert| {
+            let mask = invert * 3;
+            candidate_range
+                .iter()
+                .enumerate()
+                .all(|(i, candidate)| candidate[1] >= lookup[i ^ mask])
+        })
+    }
+
+    fn test_abstraction(candidate: &[u16], lookup: &[u16]) -> bool {
+        (0..2).any(|invert| {
+            let mask = invert * 3;
+            candidate
+                .iter()
+                .enumerate()
+                .all(|(i, &candidate)| candidate <= lookup[i ^ mask])
+        })
+    }
+
+    fn test_precise(candidate: OutputSet<&[bool]>, lookup: OutputSet<&[bool]>) -> bool {
+        if candidate.subsumes_permuted(lookup) {
+            true
+        } else {
+            let mut inverted = candidate.to_owned();
+            inverted.invert();
+            inverted.subsumes_permuted(lookup)
+        }
     }
 }
 

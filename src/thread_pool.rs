@@ -15,19 +15,18 @@ use abort_on_panic::abort_on_panic;
 use async_task::{JoinHandle, Task};
 use crossbeam_channel::{unbounded, Sender};
 
-type Prio = (usize, usize, u8, usize);
 type WeakSchedule = Weak<RwLock<Option<Task<()>>>>;
 
 #[derive(Default)]
-struct Pending {
+struct Pending<Prio: Ord + Copy + Send + Sync + 'static> {
     next_gc: usize,
-    queue: BTreeMap<Prio, WeakSchedule>,
+    queue: BTreeMap<(Prio, usize), WeakSchedule>,
 }
 
-pub struct ThreadPool {
+pub struct ThreadPool<Prio: Ord + Copy + Send + Sync + 'static> {
     queue: Sender<Task<()>>,
-    pending_queue: Sender<(Prio, WeakSchedule)>,
-    pending: Arc<RwLock<Pending>>,
+    pending_queue: Sender<((Prio, usize), WeakSchedule)>,
+    pending: Arc<RwLock<Pending<Prio>>>,
     pending_id: AtomicUsize,
 }
 
@@ -71,7 +70,7 @@ impl<T> Drop for Handle<T> {
     }
 }
 
-impl ThreadPool {
+impl<Prio: Ord + Copy + Send + Sync + 'static> ThreadPool<Prio> {
     pub fn spawn<'a, O>(&'a self, future: Pin<Box<dyn Future<Output = O> + Send + 'a>>) -> Handle<O>
     where
         O: Send + 'static,
@@ -114,23 +113,26 @@ impl ThreadPool {
         )
     }
 
-    pub fn add_pending(&self, level: usize, len: usize, bound: u8, schedule: &Schedule) {
+    pub fn add_pending(&self, prio: Prio, schedule: &Schedule) {
         let id = self.pending_id.fetch_add(1, Ordering::Relaxed);
 
         self.pending_queue
-            .send(((level, len, bound, id), Arc::downgrade(&schedule.task)))
+            .send(((prio, id), Arc::downgrade(&schedule.task)))
             .unwrap();
     }
 
-    pub fn scope<T>(in_scope: impl FnOnce(&ThreadPool) -> T) -> T {
+    pub fn scope<T>(in_scope: impl FnOnce(&ThreadPool<Prio>) -> T) -> T {
         let (sender, receiver) = unbounded::<Task<()>>();
 
-        let (pending_sender, pending_receiver) = unbounded::<(Prio, WeakSchedule)>();
+        let (pending_sender, pending_receiver) = unbounded::<((Prio, usize), WeakSchedule)>();
 
         let pool = Self {
             queue: sender,
             pending_queue: pending_sender,
-            pending: Default::default(),
+            pending: Arc::new(RwLock::new(Pending {
+                next_gc: 0,
+                queue: Default::default(),
+            })),
             pending_id: 0.into(),
         };
 
@@ -187,10 +189,15 @@ impl ThreadPool {
                         }
                     }
 
-                    if let Ok(task) = receiver.recv() {
-                        abort_on_panic!("task panicked", { task.run() });
-                    } else {
-                        break;
+                    match receiver.recv_timeout(std::time::Duration::from_millis(10)) {
+                        Ok(task) => {
+                            abort_on_panic!("task panicked", { task.run() });
+                        }
+                        Err(err) => {
+                            if err.is_disconnected() {
+                                break;
+                            }
+                        }
                     }
                 })
             })
