@@ -32,16 +32,26 @@ pub trait IndexDirection {
         Self::test_abstraction(lookup, candidate)
     }
 
-    fn test_precise(candidate: OutputSet<&[bool]>, lookup: OutputSet<&[bool]>) -> bool;
+    fn test_precise(
+        candidate: OutputSet<&[bool]>,
+        candidate_abstraction: &[u16],
+        lookup: OutputSet<&[bool]>,
+        lookup_abstraction: &[u16],
+    ) -> bool;
 
-    fn test_precise_update(candidate: OutputSet<&[bool]>, lookup: OutputSet<&[bool]>) -> bool {
-        Self::test_precise(lookup, candidate)
+    fn test_precise_update(
+        candidate: OutputSet<&[bool]>,
+        candidate_abstraction: &[u16],
+        lookup: OutputSet<&[bool]>,
+        lookup_abstraction: &[u16],
+    ) -> bool {
+        Self::test_precise(lookup, lookup_abstraction, candidate, candidate_abstraction)
     }
 }
 
 impl IndexDirection for Lower {
     fn lookup_dir() -> bool {
-        true
+        false
     }
 
     fn can_improve(best_so_far: Option<u8>, range: [u8; 2]) -> bool {
@@ -89,14 +99,19 @@ impl IndexDirection for Lower {
             .all(|(&candidate, &lookup)| candidate <= lookup)
     }
 
-    fn test_precise(candidate: OutputSet<&[bool]>, lookup: OutputSet<&[bool]>) -> bool {
+    fn test_precise(
+        candidate: OutputSet<&[bool]>,
+        _candidate_abstraction: &[u16],
+        lookup: OutputSet<&[bool]>,
+        _lookup_abstraction: &[u16],
+    ) -> bool {
         candidate.subsumes_permuted(lookup)
     }
 }
 
 impl IndexDirection for LowerInvert {
     fn lookup_dir() -> bool {
-        true
+        false
     }
 
     fn can_improve(best_so_far: Option<u8>, range: [u8; 2]) -> bool {
@@ -153,8 +168,15 @@ impl IndexDirection for LowerInvert {
         })
     }
 
-    fn test_precise(candidate: OutputSet<&[bool]>, lookup: OutputSet<&[bool]>) -> bool {
-        if candidate.subsumes_permuted(lookup) {
+    fn test_precise(
+        candidate: OutputSet<&[bool]>,
+        candidate_abstraction: &[u16],
+        lookup: OutputSet<&[bool]>,
+        lookup_abstraction: &[u16],
+    ) -> bool {
+        if Lower::test_abstraction(candidate_abstraction, lookup_abstraction)
+            && candidate.subsumes_permuted(lookup)
+        {
             true
         } else {
             let mut inverted = candidate.to_owned();
@@ -166,7 +188,7 @@ impl IndexDirection for LowerInvert {
 
 impl IndexDirection for Upper {
     fn lookup_dir() -> bool {
-        false
+        true
     }
 
     fn can_improve(best_so_far: Option<u8>, range: [u8; 2]) -> bool {
@@ -214,7 +236,12 @@ impl IndexDirection for Upper {
             .all(|(&candidate, &lookup)| candidate >= lookup)
     }
 
-    fn test_precise(candidate: OutputSet<&[bool]>, lookup: OutputSet<&[bool]>) -> bool {
+    fn test_precise(
+        candidate: OutputSet<&[bool]>,
+        _candidate_abstraction: &[u16],
+        lookup: OutputSet<&[bool]>,
+        _lookup_abstraction: &[u16],
+    ) -> bool {
         lookup.subsumes_permuted(candidate)
     }
 }
@@ -275,7 +302,12 @@ impl<Dir: IndexDirection> OutputSetIndex<Dir> {
             }
             candidate_output_set.unpack_from_slice(packed_candidate);
             if candidate_output_set != output_set {
-                if !Dir::test_precise(candidate_output_set.as_ref(), output_set) {
+                if !Dir::test_precise(
+                    candidate_output_set.as_ref(),
+                    candidate_abstraction,
+                    output_set,
+                    abstraction,
+                ) {
                     return true;
                 }
             }
@@ -304,6 +336,52 @@ impl<Dir: IndexDirection> OutputSetIndex<Dir> {
         }
 
         best_so_far
+    }
+
+    pub fn insert_new_unchecked_with_abstraction(
+        &mut self,
+        output_set: OutputSet<&[bool]>,
+        abstraction: &[u16],
+        value: u8,
+    ) {
+        let old_size = self.packed.len();
+        self.packed.resize(old_size + self.packed_dim, 0);
+        output_set.pack_into_slice(&mut self.packed[old_size..]);
+
+        self.points.extend_from_slice(abstraction);
+        self.values.push(value);
+
+        if self.values.len() >= TREE_THRESHOLD {
+            self.trees.sort_by_key(|tree| Reverse(tree.len()));
+
+            while let Some(tree) = self.trees.pop() {
+                if tree.len() > self.values.len() {
+                    self.trees.push(tree);
+                    break;
+                }
+                tree.traverse(
+                    (),
+                    Dir::lookup_dir(),
+                    |_, _, _| true,
+                    |_, point, packed, value| {
+                        self.points.extend_from_slice(point);
+                        self.packed.extend_from_slice(packed);
+                        self.values.push(value);
+                        true
+                    },
+                );
+            }
+
+            let tree = Tree::new(
+                self.point_dim,
+                replace(&mut self.points, vec![]),
+                self.packed_dim,
+                replace(&mut self.packed, vec![]),
+                replace(&mut self.values, vec![]),
+            );
+
+            self.trees.push(tree);
+        }
     }
 
     pub fn insert_with_abstraction(
@@ -347,7 +425,12 @@ impl<Dir: IndexDirection> OutputSetIndex<Dir> {
                 updated_in_place = true;
                 return TraversalMut::Retain;
             }
-            if !Dir::test_precise_update(candidate_output_set.as_ref(), output_set) {
+            if !Dir::test_precise_update(
+                candidate_output_set.as_ref(),
+                candidate_abstraction,
+                output_set,
+                abstraction,
+            ) {
                 return TraversalMut::Retain;
             }
 
@@ -393,45 +476,7 @@ impl<Dir: IndexDirection> OutputSetIndex<Dir> {
             return value;
         }
 
-        let old_size = self.packed.len();
-        self.packed.resize(old_size + self.packed_dim, 0);
-        output_set.pack_into_slice(&mut self.packed[old_size..]);
-
-        self.points.extend_from_slice(abstraction);
-        self.values.push(value);
-
-        if self.values.len() >= TREE_THRESHOLD {
-            self.trees.sort_by_key(|tree| Reverse(tree.len()));
-
-            while let Some(tree) = self.trees.pop() {
-                if tree.len() > self.values.len() {
-                    self.trees.push(tree);
-                    break;
-                }
-                tree.traverse(
-                    (),
-                    Dir::lookup_dir(),
-                    |_, _, _| true,
-                    |_, point, packed, value| {
-                        self.points.extend_from_slice(point);
-                        self.packed.extend_from_slice(packed);
-                        self.values.push(value);
-                        true
-                    },
-                );
-            }
-
-            let tree = Tree::new(
-                self.point_dim,
-                replace(&mut self.points, vec![]),
-                self.packed_dim,
-                replace(&mut self.packed, vec![]),
-                replace(&mut self.values, vec![]),
-            );
-
-            self.trees.push(tree);
-        }
-
+        self.insert_new_unchecked_with_abstraction(output_set, abstraction, value);
         value
     }
 

@@ -12,6 +12,7 @@ use sortnetopt::{
         index::{Lower, OutputSetIndex},
         OutputSet, MAX_CHANNELS,
     },
+    prune::{prune, prune_all},
     search::Search,
 };
 
@@ -27,6 +28,8 @@ struct Opt {
 #[derive(Debug, StructOpt)]
 enum OptCommand {
     Search(OptSearch),
+    Prune(OptPrune),
+    PruneAll(OptPruneAll),
     Gnp(OptGnp),
 }
 
@@ -38,6 +41,20 @@ struct OptSearch {
     output: Option<PathBuf>,
     #[structopt(short, long)]
     limit: Option<usize>,
+}
+
+#[derive(Debug, StructOpt)]
+struct OptPrune {
+    /// Number of channels in the sorting network
+    channels: usize,
+    #[structopt(parse(from_os_str))]
+    input: PathBuf,
+}
+
+#[derive(Debug, StructOpt)]
+struct OptPruneAll {
+    #[structopt(parse(from_os_str))]
+    input: PathBuf,
 }
 
 #[derive(Debug, StructOpt)]
@@ -55,6 +72,8 @@ fn main() {
 
     match opt.command {
         OptCommand::Search(opt) => cmd_search(opt),
+        OptCommand::Prune(opt) => cmd_prune(opt),
+        OptCommand::PruneAll(opt) => cmd_prune_all(opt),
         OptCommand::Gnp(opt) => cmd_gnp(opt),
     }
 }
@@ -68,6 +87,16 @@ fn cmd_search(opt: OptSearch) {
         "result = {}",
         Search::search(initial.as_ref(), opt.limit, opt.output.clone())
     );
+}
+
+fn cmd_prune(opt: OptPrune) {
+    log::info!("options: {:?}", opt);
+    prune(opt.channels, opt.input);
+}
+
+fn cmd_prune_all(opt: OptPruneAll) {
+    log::info!("options: {:?}", opt);
+    prune_all(opt.input);
 }
 
 fn cmd_gnp(opt: OptGnp) {

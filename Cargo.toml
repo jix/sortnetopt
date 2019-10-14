@@ -31,6 +31,9 @@ crossbeam-channel = "0.3.9"
 abort_on_panic = "2.0.0"
 scopeguard = "1.0.0"
 pin-utils = "0.1.0-alpha.4"
+memmap = "0.7.0"
+rayon = "1.2.0"
+indicatif = "0.12.0"
 
 [dev-dependencies]
 proptest = "0.9.4"
