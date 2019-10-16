@@ -41,14 +41,24 @@ impl Subsume {
         }
     }
 
-    pub fn search(&mut self) -> bool {
+    pub fn search(&mut self) -> Option<CVec<usize>> {
         loop {
             loop {
                 if self.fixed_channels == self.channels {
-                    return self.output_sets[0].subsumes_unpermuted(self.output_sets[1].as_ref());
+                    if self.output_sets[0].subsumes_unpermuted(self.output_sets[1].as_ref()) {
+                        let mut perm = (0..self.channels).collect::<CVec<_>>();
+
+                        for i in 0..self.channels {
+                            perm[self.perms[1][i]] = self.perms[0][i];
+                        }
+
+                        return Some(perm);
+                    } else {
+                        return None;
+                    }
                 }
                 if !self.filter_matching() {
-                    return false;
+                    return None;
                 }
                 if !self.move_unique() {
                     break;
@@ -62,16 +72,17 @@ impl Subsume {
 
             if self.isolate_matching(guess) {
                 self.move_unique();
-                if self.search() {
+                let result = self.search();
+                if result.is_some() {
                     self.rollback(stack_depth, fixed_channels);
-                    return true;
+                    return result;
                 }
             }
 
             self.rollback(stack_depth, fixed_channels);
 
             if !self.remove_matching(guess) {
-                return false;
+                return None;
             }
             self.move_unique();
         }

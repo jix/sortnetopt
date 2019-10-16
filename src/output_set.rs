@@ -374,7 +374,7 @@ where
             .all(|(&my_value, &other_value)| !my_value | other_value)
     }
 
-    pub fn subsumes_permuted(&self, other: OutputSet<impl AsRef<[bool]>>) -> bool {
+    pub fn subsumes_permuted(&self, other: OutputSet<impl AsRef<[bool]>>) -> Option<CVec<usize>> {
         subsume::Subsume::new([self.to_owned(), other.to_owned()]).search()
     }
 
@@ -796,9 +796,11 @@ mod test {
                     permuted.swap_channels(pair);
                 }
 
-                assert!(permuted.subsumes_permuted(output_set.as_ref()));
-                assert!(output_set.subsumes_permuted(permuted.as_ref()));
-                assert!(!previous_output_set.subsumes_permuted(permuted.as_ref()));
+                assert!(permuted.subsumes_permuted(output_set.as_ref()).is_some());
+                assert!(output_set.subsumes_permuted(permuted.as_ref()).is_some());
+                assert!(previous_output_set
+                    .subsumes_permuted(permuted.as_ref())
+                    .is_none());
                 let strict_progress = permuted.subsumes_permuted(previous_output_set.as_ref());
 
                 log::info!(

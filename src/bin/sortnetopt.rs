@@ -12,6 +12,7 @@ use sortnetopt::{
         index::{Lower, OutputSetIndex},
         OutputSet, MAX_CHANNELS,
     },
+    proof::gen_proof,
     prune::{prune, prune_all},
     search::Search,
 };
@@ -30,6 +31,7 @@ enum OptCommand {
     Search(OptSearch),
     Prune(OptPrune),
     PruneAll(OptPruneAll),
+    GenProof(OptGenProof),
     Gnp(OptGnp),
 }
 
@@ -58,6 +60,12 @@ struct OptPruneAll {
 }
 
 #[derive(Debug, StructOpt)]
+struct OptGenProof {
+    #[structopt(parse(from_os_str))]
+    input: PathBuf,
+}
+
+#[derive(Debug, StructOpt)]
 struct OptGnp {
     /// Number of channels in the sorting network
     channels: usize,
@@ -74,6 +82,7 @@ fn main() {
         OptCommand::Search(opt) => cmd_search(opt),
         OptCommand::Prune(opt) => cmd_prune(opt),
         OptCommand::PruneAll(opt) => cmd_prune_all(opt),
+        OptCommand::GenProof(opt) => cmd_gen_proof(opt),
         OptCommand::Gnp(opt) => cmd_gnp(opt),
     }
 }
@@ -97,6 +106,11 @@ fn cmd_prune(opt: OptPrune) {
 fn cmd_prune_all(opt: OptPruneAll) {
     log::info!("options: {:?}", opt);
     prune_all(opt.input);
+}
+
+fn cmd_gen_proof(opt: OptGenProof) {
+    log::info!("options: {:?}", opt);
+    gen_proof(opt.input);
 }
 
 fn cmd_gnp(opt: OptGnp) {

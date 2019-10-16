@@ -1,6 +1,6 @@
 use std::{cmp::Reverse, iter::repeat, mem::replace};
 
-use super::{BVec, OutputSet};
+use super::{BVec, CVec, OutputSet};
 
 mod tree;
 
@@ -14,6 +14,8 @@ pub enum Upper {}
 const TREE_THRESHOLD: usize = 32;
 
 pub trait IndexDirection {
+    type Perm;
+
     fn lookup_dir() -> bool;
 
     fn can_improve(best_so_far: Option<u8>, range: [u8; 2]) -> bool;
@@ -37,7 +39,7 @@ pub trait IndexDirection {
         candidate_abstraction: &[u16],
         lookup: OutputSet<&[bool]>,
         lookup_abstraction: &[u16],
-    ) -> bool;
+    ) -> Option<Self::Perm>;
 
     fn test_precise_update(
         candidate: OutputSet<&[bool]>,
@@ -45,11 +47,15 @@ pub trait IndexDirection {
         lookup: OutputSet<&[bool]>,
         lookup_abstraction: &[u16],
     ) -> bool {
-        Self::test_precise(lookup, lookup_abstraction, candidate, candidate_abstraction)
+        Self::test_precise(lookup, lookup_abstraction, candidate, candidate_abstraction).is_some()
     }
+
+    fn id_perm(channels: usize) -> Self::Perm;
 }
 
 impl IndexDirection for Lower {
+    type Perm = CVec<usize>;
+
     fn lookup_dir() -> bool {
         false
     }
@@ -104,12 +110,18 @@ impl IndexDirection for Lower {
         _candidate_abstraction: &[u16],
         lookup: OutputSet<&[bool]>,
         _lookup_abstraction: &[u16],
-    ) -> bool {
+    ) -> Option<Self::Perm> {
         candidate.subsumes_permuted(lookup)
+    }
+
+    fn id_perm(channels: usize) -> Self::Perm {
+        (0..channels).collect()
     }
 }
 
 impl IndexDirection for LowerInvert {
+    type Perm = (bool, CVec<usize>);
+
     fn lookup_dir() -> bool {
         false
     }
@@ -173,20 +185,28 @@ impl IndexDirection for LowerInvert {
         candidate_abstraction: &[u16],
         lookup: OutputSet<&[bool]>,
         lookup_abstraction: &[u16],
-    ) -> bool {
-        if Lower::test_abstraction(candidate_abstraction, lookup_abstraction)
-            && candidate.subsumes_permuted(lookup)
-        {
-            true
-        } else {
-            let mut inverted = candidate.to_owned();
-            inverted.invert();
-            inverted.subsumes_permuted(lookup)
+    ) -> Option<Self::Perm> {
+        if Lower::test_abstraction(candidate_abstraction, lookup_abstraction) {
+            if let Some(perm) = candidate.subsumes_permuted(lookup) {
+                return Some((false, perm));
+            }
         }
+        let mut inverted = candidate.to_owned();
+        inverted.invert();
+        if let Some(perm) = inverted.subsumes_permuted(lookup) {
+            return Some((true, perm));
+        }
+        None
+    }
+
+    fn id_perm(channels: usize) -> Self::Perm {
+        (false, (0..channels).collect())
     }
 }
 
 impl IndexDirection for Upper {
+    type Perm = CVec<usize>;
+
     fn lookup_dir() -> bool {
         true
     }
@@ -241,8 +261,12 @@ impl IndexDirection for Upper {
         _candidate_abstraction: &[u16],
         lookup: OutputSet<&[bool]>,
         _lookup_abstraction: &[u16],
-    ) -> bool {
+    ) -> Option<Self::Perm> {
         lookup.subsumes_permuted(candidate)
+    }
+
+    fn id_perm(channels: usize) -> Self::Perm {
+        (0..channels).collect()
     }
 }
 
@@ -269,6 +293,78 @@ impl<Dir: IndexDirection> OutputSetIndex<Dir> {
             packed: vec![],
             values: vec![],
         }
+    }
+
+    pub fn lookup_subsuming_with_abstraction(
+        &self,
+        output_set: OutputSet<&[bool]>,
+        abstraction: &[u16],
+    ) -> Option<(u8, Dir::Perm, OutputSet)> {
+        let mut best_so_far = None;
+
+        let mut bitmap = repeat(false).take(1 << self.channels).collect::<BVec<_>>();
+        let mut candidate_output_set = OutputSet::from_bitmap(self.channels, &mut bitmap[..]);
+
+        let mut node_filter = |best_so_far: &mut Option<(u8, Dir::Perm, OutputSet)>,
+                               augmentation: &Augmentation,
+                               ranges: &[[u16; 2]]|
+         -> bool {
+            Dir::can_improve(best_so_far.as_ref().map(|x| x.0), augmentation.value_range)
+                && Dir::test_abstraction_range(ranges, abstraction)
+        };
+
+        let mut action = |best_so_far: &mut Option<(u8, Dir::Perm, OutputSet)>,
+                          candidate_abstraction: &[u16],
+                          packed_candidate: &[u8],
+                          value: u8|
+         -> bool {
+            if !Dir::does_improve(best_so_far.as_ref().map(|x| x.0), value) {
+                return true;
+            }
+            if !Dir::test_abstraction(candidate_abstraction, abstraction) {
+                return true;
+            }
+            candidate_output_set.unpack_from_slice(packed_candidate);
+            let perm = if candidate_output_set == output_set {
+                Dir::id_perm(output_set.channels())
+            } else {
+                let perm = Dir::test_precise(
+                    candidate_output_set.as_ref(),
+                    candidate_abstraction,
+                    output_set,
+                    abstraction,
+                );
+                if let Some(perm) = perm {
+                    perm
+                } else {
+                    return true;
+                }
+            };
+
+            *best_so_far = Some((value, perm, candidate_output_set.to_owned()));
+
+            true
+        };
+
+        for tree in self.trees.iter() {
+            best_so_far = tree.traverse(
+                best_so_far,
+                Dir::lookup_dir(),
+                &mut node_filter,
+                &mut action,
+            );
+        }
+
+        for (index, &value) in self.values.iter().enumerate() {
+            action(
+                &mut best_so_far,
+                &self.points[index * self.point_dim..][..self.point_dim],
+                &self.packed[index * self.packed_dim..][..self.packed_dim],
+                value,
+            );
+        }
+
+        best_so_far
     }
 
     pub fn lookup_with_abstraction(
@@ -302,12 +398,14 @@ impl<Dir: IndexDirection> OutputSetIndex<Dir> {
             }
             candidate_output_set.unpack_from_slice(packed_candidate);
             if candidate_output_set != output_set {
-                if !Dir::test_precise(
+                if Dir::test_precise(
                     candidate_output_set.as_ref(),
                     candidate_abstraction,
                     output_set,
                     abstraction,
-                ) {
+                )
+                .is_none()
+                {
                     return true;
                 }
             }

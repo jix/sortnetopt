@@ -1,6 +1,5 @@
 use std::{
-    cmp::Reverse,
-    collections::{hash_map::Entry, BinaryHeap},
+    collections::hash_map::Entry,
     fs::{create_dir, File},
     io::{self, BufWriter, ErrorKind, Write},
     path::PathBuf,
@@ -17,6 +16,7 @@ mod states;
 
 use self::states::{State, StateMap};
 use crate::{
+    huffman::max_plus_1_huffman,
     output_set::{CVec, OutputSet},
     thread_pool::{Handle, Schedule, ThreadPool},
 };
@@ -507,17 +507,4 @@ impl Edges {
             }
         }
     }
-}
-
-fn max_plus_1_huffman(values: &[u8]) -> u8 {
-    let mut heap: BinaryHeap<Reverse<u8>> = values.iter().map(|&v| Reverse(v)).collect();
-
-    while let Some(Reverse(first)) = heap.pop() {
-        if let Some(Reverse(second)) = heap.pop() {
-            heap.push(Reverse(first.max(second) + 1));
-        } else {
-            return first;
-        }
-    }
-    0
 }
