@@ -7,6 +7,7 @@ use std::{
 };
 
 use byteorder::{LittleEndian, WriteBytesExt};
+use indicatif::{ProgressBar, ProgressStyle};
 use memmap::MmapOptions;
 use rayon::prelude::*;
 use rustc_hash::FxHashMap as HashMap;
@@ -111,12 +112,21 @@ impl GenProof {
     }
 
     pub fn prove_all(&mut self) {
+        let template = "{elapsed_precise} [{wide_bar:.green/blue}] {percent}% {pos}/{len} {eta}";
+        let bar = ProgressBar::new(self.output_sets.len() as u64);
+        bar.set_style(
+            ProgressStyle::default_bar()
+                .template(template)
+                .progress_chars("#>-"),
+        );
+
         self.steps = self
             .output_sets
             .iter()
             .collect::<Vec<_>>()
             .into_par_iter()
             .map(|(output_set, &(bound, _))| {
+                bar.inc(1);
                 let proof_step = self
                     .trivial_step(bound, output_set.as_ref().as_ref())
                     .or_else(|| self.huffman_step(bound, output_set.as_ref().as_ref()))

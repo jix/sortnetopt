@@ -34,6 +34,7 @@ pub fn setup(print_mem_usage: bool) {
                 )
             }
         })
+        .target(env_logger::Target::Stdout)
         .is_test(cfg!(test))
         .try_init();
 }
