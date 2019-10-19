@@ -1,3 +1,4 @@
+pub mod fix;
 pub mod huffman;
 pub mod logging;
 pub mod output_set;

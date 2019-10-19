@@ -7,6 +7,7 @@ use rustc_hash::FxHashSet as HashSet;
 use structopt::StructOpt;
 
 use sortnetopt::{
+    fix::fix_proof,
     logging,
     output_set::{
         index::{Lower, OutputSetIndex},
@@ -32,6 +33,7 @@ enum OptCommand {
     Prune(OptPrune),
     PruneAll(OptPruneAll),
     GenProof(OptGenProof),
+    FixProof(OptFixProof),
     Gnp(OptGnp),
 }
 
@@ -66,6 +68,12 @@ struct OptGenProof {
 }
 
 #[derive(Debug, StructOpt)]
+struct OptFixProof {
+    #[structopt(parse(from_os_str))]
+    input: PathBuf,
+}
+
+#[derive(Debug, StructOpt)]
 struct OptGnp {
     /// Number of channels in the sorting network
     channels: usize,
@@ -83,6 +91,7 @@ fn main() {
         OptCommand::Prune(opt) => cmd_prune(opt),
         OptCommand::PruneAll(opt) => cmd_prune_all(opt),
         OptCommand::GenProof(opt) => cmd_gen_proof(opt),
+        OptCommand::FixProof(opt) => cmd_fix_proof(opt),
         OptCommand::Gnp(opt) => cmd_gnp(opt),
     }
 }
@@ -111,6 +120,11 @@ fn cmd_prune_all(opt: OptPruneAll) {
 fn cmd_gen_proof(opt: OptGenProof) {
     log::info!("options: {:?}", opt);
     gen_proof(opt.input);
+}
+
+fn cmd_fix_proof(opt: OptFixProof) {
+    log::info!("options: {:?}", opt);
+    fix_proof(opt.input);
 }
 
 fn cmd_gnp(opt: OptGnp) {

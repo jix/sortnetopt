@@ -146,7 +146,10 @@ impl GenProof {
         } else {
             let mut step_data = vec![];
 
+            let bound = self.output_sets.get(target).unwrap().0;
+
             step_data.push(target.channels() as u8);
+            step_data.push(bound);
             step_data.extend(target.packed());
 
             let step_witnesses;
