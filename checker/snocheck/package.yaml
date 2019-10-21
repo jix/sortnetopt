@@ -1,0 +1,20 @@
+name:                snocheck
+version:             0.1.0.0
+#synopsis:
+#description:
+#homepage:
+#license:
+author:              Jannis Harder
+maintainer:          me@jix.one
+copyright:           2019 Jannis Harder
+#category:            Web
+
+dependencies:
+  - base >= 4.7 && < 5
+  - bytestring
+  - containers
+
+executables:
+  snocheck:
+    source-dirs:      src
+    main:             Main.hs
