@@ -38,8 +38,12 @@ checkStep :: ProofSteps -> Int -> Result ()
 checkStep steps stepId = do
   step <- steps stepId
   case witnesses step of
-    Huffman pol witnesses -> checkHuffman steps step pol witnesses
-    Successors witnesses  -> checkSuccessors steps step witnesses
+    Huffman pol witnesses -> checkHuffman steps' step pol witnesses
+    Successors witnesses  -> checkSuccessors steps' step witnesses
+ where
+  steps' i = do
+    check "witness step id out of bounds" (i < stepId)
+    steps i
 
 checkHuffman :: ProofSteps -> ProofStep -> Bool -> [Maybe Witness] -> Result ()
 checkHuffman steps step pol witnesses = do
@@ -80,6 +84,8 @@ checkSuccessors steps step witnesses = do
       successors = catMaybes
         [ VS.applyComp i j vs | i <- [0 .. channels - 1], j <- [0 .. i - 1] ]
 
+  check "set might already be sorted" (VS.size vs > 1 + VS.channels vs)
+
   check "wrong number of successor witnesses"
         (length successors == length witnesses)
 
@@ -91,14 +97,13 @@ checkSuccessors steps step witnesses = do
   return ()
 
 getBound :: ProofSteps -> Maybe Witness -> VectSet -> Result Int
-getBound _ Nothing vs | VS.size vs <= VS.channels vs = return 0
-                      | otherwise                    = return 1
+getBound _ Nothing vs | VS.size vs <= 1 + VS.channels vs = return 0
+                      | otherwise                        = return 1
 getBound steps (Just witness) vs = do
   witnessStep <- steps $ stepId witness
   let witnessSet         = vectSet witnessStep
       witnessSet' = if invert witness then VS.invert witnessSet else witnessSet
       witnessBound       = bound witnessStep
       permutedWitnessSet = VS.permute (perm witness) witnessSet'
-      permuted           = VS.permute (perm witness) vs
   check "witness does not subsume target" (VS.subsumes permutedWitnessSet vs)
   return witnessBound
