@@ -1,0 +1,14 @@
+@@ -14,2 +14,3 @@
+ import qualified Prelude;
++import qualified Parallel;
+
+@@ -72,3 +73,3 @@
+
+-data Vect_trie = VtEmpty | VtNode Bool Vect_trie Vect_trie;
++data Vect_trie = VtEmpty | VtNode !Bool !Vect_trie !Vect_trie;
+
+@@ -121,3 +122,3 @@
+ par :: forall a b. a -> b -> b;
+-par a b = b;
++par = Parallel.par;
+

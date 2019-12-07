@@ -1,0 +1,15 @@
+session Sorting_Networks = HOL +
+  options [document = pdf, document_output = "output",
+    document_variants = "document:outline=/proof,/ML"]
+  sessions
+    "HOL-Library"
+  theories
+    Sorting_Network_Bound
+    Huffman
+    Sorting_Network
+    Checker
+    Checker_Codegen
+  document_files
+    "root.tex"
+  export_files 
+    "Sorting_Networks.Checker_Codegen:**"

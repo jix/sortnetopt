@@ -13,8 +13,10 @@ dependencies:
   - base >= 4.7 && < 5
   - bytestring
   - containers
+  - parallel
 
 executables:
   snocheck:
     source-dirs:      src
+    ghc-options:      -threaded -rtsopts -with-rtsopts=-N
     main:             Main.hs

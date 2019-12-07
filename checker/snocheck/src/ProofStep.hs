@@ -20,7 +20,7 @@ data Witnesses = Huffman Bool [Maybe Witness]
                deriving (Show)
 
 witnessList :: Witnesses -> [Maybe Witness]
-witnessList (Huffman _ ws) = ws
+witnessList (Huffman _ ws ) = ws
 witnessList (Successors ws) = ws
 
 data Witness = Witness

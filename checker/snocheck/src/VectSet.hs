@@ -10,6 +10,7 @@ module VectSet
   , subsumes
   , extremalChannels
   , pruneExtremal
+  , asBoolVectList
   )
 where
 
@@ -87,3 +88,7 @@ pruneExtremal pol a vs | channels vs > 0 = VectSet { channels = channels vs - 1
     IS.map (\v -> v .&. maskLow .|. (v `shiftR` 1) .&. maskHigh)
       . IS.filter (\v -> v .&. mask == target)
       $ vects vs
+
+asBoolVectList :: VectSet -> [[Bool]]
+asBoolVectList vs = map toBoolVect (IS.toList (vects vs))
+  where toBoolVect v = [testBit v i | i <- [0..channels vs - 1]]

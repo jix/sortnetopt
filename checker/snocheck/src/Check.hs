@@ -13,6 +13,7 @@ import qualified Data.IntMap.Strict            as IM
 import           ProofStep
 import           VectSet                        ( VectSet )
 import qualified VectSet                       as VS
+import           Parallel
 
 type Result a = Either String a
 
@@ -23,7 +24,7 @@ check msg cond = if cond then return () else Left msg
 
 checkProof :: (Int, Int -> ProofStep) -> Result (Int, Int)
 checkProof (stepCount, stepFn) = do
-  traverse_ checkStep' [0 .. stepCount - 1]
+  parCheckRange checkStep' 0 stepCount
   let lastStep = stepFn $ stepCount - 1
   return (VS.channels $ vectSet lastStep, bound lastStep)
  where
@@ -33,6 +34,15 @@ checkProof (stepCount, stepFn) = do
   checkStep' stepId = case checkStep steps stepId of
     Left err -> Left $ "step " ++ show stepId ++ ": " ++ err
     x        -> x
+
+parCheckRange :: (Int -> Result ()) -> Int -> Int -> Result ()
+parCheckRange checkFn low high = if (high - low) < 1000
+  then traverse_ checkFn [low .. high - 1]
+  else
+    let mid = (low + high) `div` 2
+        a   = parCheckRange checkFn low mid
+        b   = parCheckRange checkFn mid high
+    in  par b a >> b
 
 checkStep :: ProofSteps -> Int -> Result ()
 checkStep steps stepId = do
