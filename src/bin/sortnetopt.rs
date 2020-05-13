@@ -45,6 +45,8 @@ struct OptSearch {
     output: Option<PathBuf>,
     #[structopt(short, long)]
     limit: Option<usize>,
+    #[structopt(short, long)]
+    prefix: Vec<usize>,
 }
 
 #[derive(Debug, StructOpt)]
@@ -99,7 +101,11 @@ fn main() {
 fn cmd_search(opt: OptSearch) {
     log::info!("options: {:?}", opt);
 
-    let initial = OutputSet::all_values(opt.channels);
+    let mut initial = OutputSet::all_values(opt.channels);
+
+    for pair in opt.prefix.chunks(2) {
+        initial.apply_comparator([pair[0], pair[1]]);
+    }
 
     log::info!(
         "result = {}",
