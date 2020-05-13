@@ -205,7 +205,7 @@ impl Search {
             }
         }
 
-        while state.huffman_bounds[1] > state.bounds[0] {
+        if state.huffman_bounds[1] > state.bounds[0] {
             let new_state = self.improve_huffman(pool, level, output_set).await;
             if new_state.bounds[0] > state.bounds[0] {
                 return new_state;
