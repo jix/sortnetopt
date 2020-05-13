@@ -116,9 +116,9 @@ impl<Prio: Ord + Copy + Send + Sync + 'static> ThreadPool<Prio> {
     pub fn add_pending(&self, prio: Prio, schedule: &Schedule) {
         let id = self.pending_id.fetch_add(1, Ordering::Relaxed);
 
-        self.pending_queue
-            .send(((prio, id), Arc::downgrade(&schedule.task)))
-            .unwrap();
+        // Ignore errors here, to not panic during tear down
+        let _ = self.pending_queue
+            .send(((prio, id), Arc::downgrade(&schedule.task)));
     }
 
     pub fn scope<T>(in_scope: impl FnOnce(&ThreadPool<Prio>) -> T) -> T {
