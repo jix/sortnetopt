@@ -2,6 +2,13 @@ theory Huffman
   imports Main "HOL-Library.Multiset"
 begin
 
+text \<open>In this theory we define Huffman's algorithm and prove its correctness for an arbitrary
+Huffman algebra (TODO ref). If you are only interested in the parts specific to sorting networks,
+you can skip this theory.\<close>
+
+
+text \<open>First we state the axioms of a Huffman algebra:\<close>
+
 class huffman_algebra =
   fixes combine :: "'a::linorder \<Rightarrow> 'a \<Rightarrow> 'a"  (infix \<open>\<diamondop>\<close> 70)
   assumes increasing: \<open>a \<le> a \<diamondop> b\<close>
@@ -10,9 +17,17 @@ class huffman_algebra =
   assumes mono: \<open>a \<le> b \<Longrightarrow> a \<diamondop> c \<le> b \<diamondop> c\<close>
   assumes assoc_ineq: \<open>a \<le> c \<Longrightarrow> (a \<diamondop> b) \<diamondop> c \<le> a \<diamondop> (b \<diamondop> c)\<close>
 
+text \<open>We need some additional lemmas about lists, finite multisets of list elements elements and
+sorted lists of multiset elements.\<close>
+
+text \<open>Removing the head of a list, removes the corresponding element from a multiset.\<close>
+
 lemma mset_tl: \<open>xs \<noteq> [] \<Longrightarrow> mset (tl xs) = mset xs - {#hd xs#}\<close>
   by (cases xs; simp)
 
+
+text \<open>The first element of a sorted list of multiset elements is the minimum element of a multiset
+if the multiset is nonempty.\<close>
 
 lemma hd_sorted_list_of_multiset:
   assumes \<open>A \<noteq> {#}\<close>
@@ -21,15 +36,23 @@ lemma hd_sorted_list_of_multiset:
       list.set_sel(1) mset.simps(1) mset_sorted_list_of_multiset set_ConsD set_mset_eq_empty_iff
       set_sorted_list_of_multiset sorted.simps(2) sorted_list_of_multiset_mset sorted_sort)
 
+text \<open>We can remove the smallest element of a nonempty multiset by turning it into a sorted list,
+and building a multiset of that lists's tail.\<close>
+
 lemma mset_tl_sorted_list_of_multiset:
   assumes \<open>A \<noteq> {#}\<close>
   shows \<open>mset (tl (sorted_list_of_multiset A)) = A - {#Min_mset A#}\<close>
   by (metis assms hd_sorted_list_of_multiset mset.simps(1) mset_sorted_list_of_multiset mset_tl)
 
+text \<open>If we have a sorted list, we can recover it from a multiset of its elements.\<close>
+
 lemma unique_sorted_list_of_multiset:
   assumes \<open>mset xs = A\<close> \<open>sorted xs\<close>
   shows \<open>xs = sorted_list_of_multiset A\<close>
   using assms(1) assms(2) sorted_sort_id by fastforce
+
+text \<open>The tail of a sorted list of multiset elements is the same as the sorted list of elements
+after removing the minimal element.\<close>
 
 lemma tl_sorted_list_of_multiset:
   assumes \<open>A \<noteq> {#}\<close>
@@ -41,16 +64,24 @@ proof -
     by (simp add: assms mset_tl_sorted_list_of_multiset unique_sorted_list_of_multiset)
 qed
 
+(***)
+
+text \<open>We also need an alternative characterization of the minimum function.\<close>
+
+lemma min_as_logic:
+  \<open>min (a::'a::linorder) b = c \<longleftrightarrow> (a = c \<and> a \<le> b) \<or> (b = c \<and> b \<le> a)\<close>
+  \<open>c = min (a::'a::linorder) b \<longleftrightarrow> (a = c \<and> a \<le> b) \<or> (b = c \<and> b \<le> a)\<close>
+  unfolding min_def by auto
 
 (***)
+
+text \<open>Huffman's algorithm repeatedly combines values in a multiset using the Huffman algebra's
+operator. To prove that the resulting value is minimal, we need to manipulate syntax trees of
+expressions using that operator, which we define here.\<close>
 
 datatype 'a expr =
   Val (the_Val: 'a) ("\<langle>_\<rangle>") |
   Op (left_subexpr: \<open>'a expr\<close>) (right_subexpr: \<open>'a expr\<close>) (infix "\<star>" 70)
-
-fun (in huffman_algebra) value_expr :: \<open>'a expr \<Rightarrow> 'a\<close> where
-  \<open>value_expr \<langle>a\<rangle> = a\<close> |
-  \<open>value_expr (E \<star> F) = value_expr E \<diamondop> value_expr F\<close>
 
 abbreviation is_Val :: \<open>'a expr \<Rightarrow> bool\<close> where
   \<open>is_Val E \<equiv> \<exists>a. E = \<langle>a\<rangle>\<close>
@@ -58,11 +89,21 @@ abbreviation is_Val :: \<open>'a expr \<Rightarrow> bool\<close> where
 abbreviation is_Op :: \<open>'a expr \<Rightarrow> bool\<close> where
   \<open>is_Op E \<equiv> \<exists>L R. E = L \<star> R\<close>
 
+text \<open>The set of values in an expression is always non-empty and finite.\<close>
+
 lemma set_expr_nonempty[simp]: \<open>set_expr E \<noteq> {}\<close>
   by (induction E; auto)
 
 lemma set_expr_finite[simp]: \<open>finite (set_expr E)\<close>
   by (induction E; auto)
+
+text \<open>We can recursively evaluate an expression using the Huffman algebra's operator.\<close>
+
+fun (in huffman_algebra) value_expr :: \<open>'a expr \<Rightarrow> 'a\<close> where
+  \<open>value_expr \<langle>a\<rangle> = a\<close> |
+  \<open>value_expr (E \<star> F) = value_expr E \<diamondop> value_expr F\<close>
+
+text \<open>We can flatten an expression into a nonempty list of contained values.\<close>
 
 abbreviation list_expr :: \<open>'a expr \<Rightarrow> 'a list\<close> where
   \<open>list_expr \<equiv> rec_expr (\<lambda>a. [a]) (\<lambda>_ _. (@))\<close>
@@ -70,11 +111,10 @@ abbreviation list_expr :: \<open>'a expr \<Rightarrow> 'a list\<close> where
 lemma list_expr_nonempty[simp]: \<open>list_expr E \<noteq> []\<close>
   by (induction E; auto)
 
+text \<open>With this we can count the number of values in the expression.\<close>
+
 abbreviation count_expr :: \<open>'a expr \<Rightarrow> nat\<close> where
   \<open>count_expr E \<equiv> length (list_expr E)\<close>
-
-lemma count_expr_size: \<open>2 * count_expr E = Suc (size E)\<close>
-  by (induction E; auto)
 
 lemma count_expr_ge1[simp]: \<open>count_expr E \<ge> 1\<close>
   by (simp add: Suc_leI)
@@ -89,47 +129,87 @@ lemma is_Op_by_count: \<open>is_Op E = (count_expr E \<ge> 2)\<close>
 lemma expr_from_list: \<open>list_expr E = [e] \<Longrightarrow> E = \<langle>e\<rangle>\<close>
   by (cases E; simp add: append_eq_Cons_conv)
 
+text \<open>The number of values in an expression is also directly related to the size of an expression.
+We get the size and several useful of its properties for free whenever we define an algebraic
+datatype. With this we get corresponding useful properties also for the number of an expression's
+values.\<close>
+
+lemma count_expr_size: \<open>2 * count_expr E = Suc (size E)\<close>
+  by (induction E; auto)
+
+text \<open>We define the multiset of an expression's values via the list of values.\<close>
+
 abbreviation mset_expr :: \<open>'a expr \<Rightarrow> 'a multiset\<close> where
   \<open>mset_expr E \<equiv> mset (list_expr E)\<close>
+
+text \<open>There is a unique expression containing just one given value.\<close>
 
 lemma expr_from_mset: \<open>mset_expr E = {# a #} \<Longrightarrow> E = \<langle>a\<rangle>\<close>
   by (simp add: expr_from_list)
 
+text \<open>Ignoring the multiplicity of the multisets's values gives us the same set as the automatically
+defined function for the set of values in an expression.\<close>
+
 lemma set_mset_expr: \<open>set_mset (mset_expr E) = set_expr E\<close>
   by (induction E; simp)
+
+text \<open>We define the head of an expression as the leftmost value in the syntax tree, and we do this
+via flattening the expression to a list of values.\<close>
 
 abbreviation hd_expr :: \<open>'a expr \<Rightarrow> 'a\<close> where
   \<open>hd_expr E \<equiv> hd (list_expr E)\<close>
 
+text \<open>We get the minimum value in an expression as the minimum value of the set of its values.\<close>
+
 definition Min_expr :: \<open>'a::linorder expr \<Rightarrow> 'a\<close> where
   \<open>Min_expr E \<equiv> Min (set_expr E)\<close>
+
+text \<open>If the expression contains just one value, the minimum is that value.\<close>
 
 lemma Min_expr_Val[simp]: \<open>Min_expr \<langle>a\<rangle> = a\<close>
   unfolding Min_expr_def
   by simp
 
+text \<open>Otherwise the minimum value can be computed recursively.\<close>
+
 lemma Min_expr_Op: \<open>Min_expr (L \<star> R) = min (Min_expr L) (Min_expr R)\<close>
   unfolding Min_expr_def
   by (simp add: Min_Un min_def)
+
+text \<open>As the Huffman algebra operator is increasing in both arguments, the minimum value in an
+expression is a lower bound for its evaluation.\<close>
 
 lemma (in huffman_algebra) Min_expr_bound:
   \<open>Min_expr E \<le> value_expr E\<close>
   by (induction E; simp add: Min_expr_Op; insert increasing min.coboundedI1 order_trans; blast)
 
+text \<open>If two expressions have the same multiset of values they contain the same minimum value.\<close>
+
 lemma Min_expr_mset_cong: \<open>mset_expr E = mset_expr F \<Longrightarrow> Min_expr E = Min_expr F\<close>
   unfolding Min_expr_def set_mset_expr[symmetric] by simp
+
+text \<open>The minimum value in an expression is also the minimum value of the multiset of its values.\<close>
 
 lemma Min_expr_from_mset: \<open>Min_expr E = Min_mset (mset_expr E)\<close>
   unfolding Min_expr_def
   by (fold set_mset_expr; simp)
 
+text \<open>We define the tail of an expression as the expression we get by removing the head if that is
+possible. This is always possible as long as the expression contains one operator.\<close>
+
 fun tl_expr :: \<open>'a expr \<Rightarrow> 'a expr\<close> where
   \<open>tl_expr \<langle>a\<rangle> = \<langle>a\<rangle>\<close> |
   \<open>tl_expr (\<langle>l\<rangle> \<star> R) = R\<close> |
   \<open>tl_expr ((L \<star> M) \<star> R) = tl_expr (L \<star> M) \<star> R\<close>
- 
+
+text \<open>If the expression contains an operator, the tail of the list of its values is the same as the
+list of values of its tail.\<close>
+
 lemma list_tl_expr: \<open>is_Op E \<Longrightarrow> list_expr (tl_expr E) = tl (list_expr E)\<close>
   by (induction E rule: tl_expr.induct; simp)
+
+text \<open>If two expressions have the same head and the same multiset of values, their tails also have
+the same multiset of values.\<close>
 
 lemma same_mset_tl_from_same_mset_mset_hd:
   assumes \<open>hd_expr E = hd_expr F\<close> \<open>mset_expr E = mset_expr F\<close>
@@ -156,6 +236,9 @@ qed
 
 (***)
 
+text \<open>Given any property of an expression, we can define a corresponding property that holds if the
+given property holds for all subexpressions of an expression (including the expression itself).\<close>
+
 inductive all_subexpr :: \<open>('a expr \<Rightarrow> bool) \<Rightarrow> 'a expr \<Rightarrow> bool\<close> where
   val: \<open>P \<langle>a\<rangle> \<Longrightarrow> all_subexpr P \<langle>a\<rangle>\<close> |
   op: \<open>\<lbrakk>P (L \<star> R); all_subexpr P L; all_subexpr P R\<rbrakk> \<Longrightarrow> all_subexpr P (L \<star> R)\<close>
@@ -170,27 +253,41 @@ lemma all_subexpr_expand: \<open>all_subexpr P (L \<star> R) = (P (L \<star> R) 
 
 (***)
 
+text \<open>An expression has a minimal head, if its head is the minimum of the contained values.\<close>
+
 abbreviation Min_hd_expr :: \<open>'a::linorder expr \<Rightarrow> bool\<close> where
   \<open>Min_hd_expr E \<equiv> hd_expr E = Min_expr E\<close>
 
-lemma min_as_logic:
-  \<open>min (a::'a::linorder) b = c \<longleftrightarrow> (a = c \<and> a \<le> b) \<or> (b = c \<and> b \<le> a)\<close>
-  \<open>c = min (a::'a::linorder) b \<longleftrightarrow> (a = c \<and> a \<le> b) \<or> (b = c \<and> b \<le> a)\<close>
-  unfolding min_def by auto
+text \<open>If an expression has this property, so does its left subexpression.\<close>
 
 lemma Min_hd_expr_left_subexpr: \<open>Min_hd_expr (L \<star> R) \<Longrightarrow> Min_hd_expr L\<close>
   by (induction L; auto simp add: Min_expr_Op min_as_logic)
 
+text \<open>In that case the minimum value contained in the left subexpression is at least as small as the
+minimum value contained in the right subexpression.\<close>
+
 lemma Min_hd_expr_subexpr_ord: \<open>Min_hd_expr (L \<star> R) \<Longrightarrow> Min_expr L \<le> Min_expr R\<close>
   using Min_hd_expr_left_subexpr min.orderI by (fastforce simp add: Min_expr_Op)
 
+text \<open>Hence to find the minimum value in an minimal head expression, we only need to look at the
+left subexpression.\<close>
+
 lemma Min_hd_expr_left_subexpr_Min: \<open>Min_hd_expr (L \<star> R) \<Longrightarrow> Min_expr (L \<star> R) = Min_expr L\<close>
   by (induction L; auto simp add: Min_expr_Op min_as_logic)
+
+text \<open>If two minimal head expressions have the same head they have same minimum contained value.\<close>
 
 lemma Min_hd_expr_Min_from_hd_cong:
   assumes \<open>Min_hd_expr E\<close> \<open>Min_hd_expr F\<close> \<open>hd_expr E = hd_expr F\<close>
   shows \<open>Min_expr E = Min_expr F\<close>
   using assms by simp
+
+text \<open>To turn an expression into a minimal head expression without changing the value it evaluates
+to, we can swap the sides of every operator where the right subexpression contains a smaller value
+than the minimum value on the left.\<close>
+
+text \<open>To do this we first define this function which combines two subexpressions such that the
+minimum value is on the left.\<close>
 
 function Min_to_hd_subexpr :: \<open>'a::linorder expr \<Rightarrow> 'a::linorder expr \<Rightarrow> 'a expr\<close> where
   \<open>Min_expr L \<le> Min_expr R \<Longrightarrow> Min_to_hd_subexpr L R = L \<star> R\<close> |
@@ -198,8 +295,20 @@ function Min_to_hd_subexpr :: \<open>'a::linorder expr \<Rightarrow> 'a::linorde
   by auto
 termination by lexicographic_order
 
+text \<open>Doing this results in an expression with the same multiset of values as combining them in a
+fixed order would result in.\<close>
+
 lemma Min_to_hd_subexpr_mset: \<open>mset_expr (Min_to_hd_subexpr L R) = mset_expr (L \<star> R)\<close>
   by (cases \<open>(L, R)\<close> rule: Min_to_hd_subexpr.cases; auto)
+
+text \<open>And does not change the value it evaluates to.\<close>
+
+lemma (in huffman_algebra) value_Min_to_hd_subexpr:
+  \<open>value_expr (Min_to_hd_subexpr L R) = value_expr L \<diamondop> value_expr R\<close>
+  by (metis Min_to_hd_subexpr.simps commutative value_expr.simps(2))
+
+text \<open>If we have two expressions, both for which all subexpression have a minimal head, combining
+them this way results in an expression where still all subexpressions have a minimal head.\<close>
 
 lemma Min_to_hd_subexpr_spec:
   assumes \<open>all_subexpr Min_hd_expr L\<close> \<open>all_subexpr Min_hd_expr R\<close>
@@ -224,6 +333,9 @@ next
     using assms False by auto
 qed
 
+text \<open>Thus we can turn any expression into one with only minimal head subexpressions, by recursing
+and combining subexpressions with @{term Min_to_hd_subexpr}.\<close>
+
 fun Min_to_hd_expr :: \<open>'a::linorder expr \<Rightarrow> 'a expr\<close> where
   \<open>Min_to_hd_expr \<langle>a\<rangle> = \<langle>a\<rangle>\<close> |
   \<open>Min_to_hd_expr (L \<star> R) = Min_to_hd_subexpr (Min_to_hd_expr L) (Min_to_hd_expr R)\<close>
@@ -234,12 +346,10 @@ lemma Min_to_hd_expr_spec:
       (subst Min_to_hd_expr.simps; rule Min_to_hd_subexpr_spec)?;
       auto)
 
+text \<open>This does not change the multiset of values nor what the expression evaluates to.\<close>
+
 lemma Min_to_hd_expr_mset: \<open>mset_expr (Min_to_hd_expr E) = mset_expr E\<close>
   by (induction E rule: Min_to_hd_expr.induct; simp add: Min_to_hd_subexpr_mset)
-
-lemma (in huffman_algebra) value_Min_to_hd_subexpr:
-  \<open>value_expr (Min_to_hd_subexpr L R) = value_expr L \<diamondop> value_expr R\<close>
-  by (metis Min_to_hd_subexpr.simps commutative value_expr.simps(2))
 
 lemma (in huffman_algebra) value_Min_to_hd_expr:
   \<open>value_expr (Min_to_hd_expr E) = value_expr E\<close>
@@ -247,8 +357,13 @@ lemma (in huffman_algebra) value_Min_to_hd_expr:
 
 (***)
 
+text \<open>We also want an expression's tail to have a minimal head, such that the two smallest values
+are the leftmost of an expression.\<close>
+
 abbreviation tl_Min_hd_expr :: \<open>'a::linorder expr \<Rightarrow> bool\<close> where
   \<open>tl_Min_hd_expr E \<equiv> Min_hd_expr (tl_expr E)\<close>
+
+text \<open>This property depends only on the list of elements, not on how they are nested.\<close>
 
 lemma tl_Min_hd_expr_list_expr_cong:
   assumes \<open>list_expr E = list_expr F\<close>
@@ -261,6 +376,11 @@ proof -
   then show ?thesis
     by (metis Min_expr_mset_cong)
 qed
+
+text \<open>By going through several cases, we can rearrange subexpression to ensure that the minimum
+value of the tail of an expression is in the left subexpression of an expression. We do this in a
+way that the Huffman algebra axioms ensure that the evaluation result is not increased as long as
+all subexpressions of the input have a minimal head.\<close>
 
 function tl_Min_to_hd_subexpr :: \<open>'a::linorder expr \<Rightarrow> 'a expr\<close> where
   \<open>tl_Min_to_hd_subexpr \<langle>a\<rangle> = \<langle>a\<rangle>\<close> |
@@ -276,9 +396,13 @@ function tl_Min_to_hd_subexpr :: \<open>'a::linorder expr \<Rightarrow> 'a expr\
   by (auto, metis tl_expr.cases)
 termination by lexicographic_order
 
+text \<open>We show that it does not change the size.\<close>
+
 lemma tl_Min_to_hd_subexpr_size[simp]:
   \<open>size (tl_Min_to_hd_subexpr E) = size E\<close>
   by (induction E rule: tl_Min_to_hd_subexpr.induct; simp)
+
+text \<open>Which allows us to apply it while recursing on the result of that application.\<close>
 
 fun tl_Min_to_hd_expr :: \<open>'a::linorder expr \<Rightarrow> 'a expr\<close>
   and helper_tl_Min_to_hd_expr :: \<open>'a::linorder expr \<Rightarrow> 'a expr\<close> where
@@ -286,12 +410,16 @@ fun tl_Min_to_hd_expr :: \<open>'a::linorder expr \<Rightarrow> 'a expr\<close>
     \<open>helper_tl_Min_to_hd_expr \<langle>a\<rangle> = \<langle>a\<rangle>\<close> |
     \<open>helper_tl_Min_to_hd_expr (L \<star> R) = tl_Min_to_hd_expr L \<star> R\<close>
 
+text \<open>This recursion also does not change the multiset of values, the minimum value, the head, the
+multiset of tail values or the minimum value of the tail.\<close>
+
 lemma tl_Min_to_hd_expr_mset: \<open>mset_expr (tl_Min_to_hd_expr E) = mset_expr E\<close>
 proof (induction \<open>size E\<close> arbitrary: E rule: less_induct)
   case less
   then show ?case
     by (cases E rule: tl_Min_to_hd_subexpr.cases; simp)
 qed
+
 
 lemma tl_Min_to_hd_expr_Min: \<open>Min_expr (tl_Min_to_hd_expr E) = Min_expr E\<close>
   using tl_Min_to_hd_expr_mset[of E]
@@ -312,11 +440,21 @@ lemma tl_Min_to_hd_expr_mset_tl: \<open>mset_expr (tl_expr (tl_Min_to_hd_expr E)
 lemma tl_Min_to_hd_expr_Min_tl: \<open>Min_expr (tl_expr (tl_Min_to_hd_expr E)) = Min_expr (tl_expr E)\<close>
   using Min_expr_mset_cong tl_Min_to_hd_expr_mset_tl by blast
 
+text \<open>To further analyze @{term tl_Min_to_hd_subexpr}, we need various lemmas about minimum
+contained values and minimal head values for expressions and tails of expressions and how they
+relate when rearranging subexpressions.\<close>
+
+text \<open>Given a minimal head expression, if we rewrite the left subexpression without changing the
+minimum value or the head, we still have a minimal head expression.\<close>
+
 lemma Min_hd_expr_rewrite_left:
   assumes \<open>Min_hd_expr (L \<star> R)\<close> \<open>Min_expr L = Min_expr L'\<close> \<open>Min_hd_expr L'\<close>
   shows \<open>Min_hd_expr (L' \<star> R)\<close>
   by (metis (mono_tags, lifting)
       Min_expr_Op Min_hd_expr_left_subexpr assms expr.simps(8) hd_append2 list_expr_nonempty)
+
+text \<open>If we have a minimal head expression and exchange the right subexpression with the right
+subexpression of the left subexpression, we still have a minimal head expression.\<close>
 
 lemma Min_hd_expr_exchange_right:
   assumes \<open>Min_hd_expr ((L \<star> M) \<star> R)\<close>
@@ -324,10 +462,16 @@ lemma Min_hd_expr_exchange_right:
   using assms
   by (simp add: Min_expr_Op; metis min.commute min.assoc)
 
+text \<open>This extends to all minimal head subexpressions.\<close>
+
 lemma all_subexpr_Min_hd_expr_exchange_right:
   assumes \<open>all_subexpr Min_hd_expr ((L \<star> M) \<star> R)\<close>
   shows \<open>all_subexpr Min_hd_expr ((L \<star> R) \<star> M)\<close>
   by (intro all_subexpr.op; insert assms Min_hd_expr_exchange_right Min_hd_expr_left_subexpr; blast)
+
+text \<open>Combining an expression where the tail has a minimal head with a singleton expression still
+has a tail with a minimal head, if that singleton expression is larger than the tail's minimal
+head.\<close>
 
 lemma tl_Min_hd_expr_right_Val:
   assumes \<open>tl_Min_hd_expr L\<close> \<open>Min_expr (tl_expr L) \<le> r\<close>
@@ -335,11 +479,19 @@ lemma tl_Min_hd_expr_right_Val:
   using assms
   by (cases L; simp add: Min_expr_Op min_absorb1 dual_order.trans min_def_raw)
 
+text \<open>If we have an upper bound for the minimum value in an expression, combining it with another
+expression on the left and then taking the tail of the resulting expression results in an expression
+that still has that upper bound, as it still contains all values of our initial expression.\<close>
+
 lemma Min_expr_tl_bound:
   assumes \<open>Min_expr M \<le> r\<close>
   shows \<open>Min_expr (tl_expr (L \<star> M)) \<le> r\<close>
   using assms
   by (cases L; simp add: Min_expr_Op min_le_iff_disj)
+
+text \<open>If we have a nonsingleton expression whose tail has a minimal head, combining it with another
+expression on the right whose minimal value is not smaller than the left expression's tail's minimal
+head, is an expression whose tail again has a minimal head.\<close>
 
 lemma tl_Min_hd_expr_right:
   assumes \<open>is_Op L\<close> \<open>tl_Min_hd_expr L\<close> \<open>Min_expr (tl_expr L) \<le> Min_expr R\<close>
@@ -347,9 +499,15 @@ lemma tl_Min_hd_expr_right:
   using assms
   by (cases L; simp add: Min_expr_Op min_absorb1 dual_order.trans min_def_raw)
 
+text \<open>Applying @{term tl_Min_to_hd_expr} to a non-singleton expression results in a non-singleton
+expression.\<close>
+
 lemma is_Op_tl_Min_to_hd_expr: \<open>is_Op (tl_Min_to_hd_expr (L \<star> R))\<close>
   unfolding is_Op_by_count
   by (metis (mono_tags, lifting) count_expr_Op mset_eq_length tl_Min_to_hd_expr_mset)
+
+text \<open>If we have an expression where all subexpressions have a minimal head, applying @{term
+tl_Min_to_hd_expr} results in an expression where the tail has a minimal head.\<close>
 
 lemma tl_Min_to_hd_expr_spec:
   \<open>all_subexpr Min_hd_expr E \<Longrightarrow> tl_Min_hd_expr (tl_Min_to_hd_expr E)\<close>
@@ -426,6 +584,9 @@ case less
   qed
 qed
 
+text \<open>If we have an expression where all subexpressions have a minimal head, applying @{term
+tl_Min_to_hd_expr} also does not increase the evaluation result.\<close>
+
 lemma (in huffman_algebra) value_tl_Min_to_hd_expr:
   \<open>all_subexpr Min_hd_expr E \<Longrightarrow> value_expr (tl_Min_to_hd_expr E) \<le> value_expr E\<close>
 proof (induction \<open>size E\<close> arbitrary: E rule: less_induct)
@@ -480,11 +641,25 @@ qed
 
 (***)
 
+text \<open>At this point we can move the two smallest values of an expression to the very left without
+increasing its value. To show that we can always combine the smallest two values, we now need to
+make sure that the leftmost nonsingleton subexpression combines two singleton subexpression, i.e.\
+combines two values.\<close>
+
+inductive left_nested_expr :: \<open>'a expr \<Rightarrow> bool\<close> where
+  pair: \<open>left_nested_expr (\<langle>l\<rangle> \<star> \<langle>r\<rangle>)\<close> |
+  nested: \<open>left_nested_expr L \<Longrightarrow> left_nested_expr (L \<star> R)\<close>
+
+text \<open>Whenever we have a singleton subexpression on the left, but not on the right, we can perform a
+rotation that splits the nonsingleton right subexpression.\<close>
+
 fun nest_left_subexpr :: \<open>'a::linorder expr \<Rightarrow> 'a expr\<close> where
   \<open>nest_left_subexpr \<langle>a\<rangle> = \<langle>a\<rangle>\<close> |
   \<open>nest_left_subexpr (\<langle>l\<rangle> \<star> \<langle>r\<rangle>) = (\<langle>l\<rangle> \<star> \<langle>r\<rangle>)\<close> |
   \<open>nest_left_subexpr (\<langle>l\<rangle> \<star> (M \<star> R)) = (\<langle>l\<rangle> \<star> M) \<star> R\<close> |
   \<open>nest_left_subexpr ((L \<star> M) \<star> R) = ((L \<star> M) \<star> R)\<close>
+
+text \<open>This does not change the expression's size or multiset of values.\<close>
 
 lemma nest_left_subexpr_size[simp]:
   \<open>size (nest_left_subexpr E) = size E\<close>
@@ -494,11 +669,15 @@ lemma nest_left_subexpr_mset[simp]:
   \<open>mset_expr (nest_left_subexpr E) = mset_expr E\<close>
   by (induction E rule: nest_left_subexpr.induct; simp)
 
+text \<open>We can perform such rotations and then recurse on the left subexpression of the result. \<close>
+
 fun nest_left_expr :: \<open>'a::linorder expr \<Rightarrow> 'a expr\<close>
   and helper_nest_left_expr :: \<open>'a::linorder expr \<Rightarrow> 'a expr\<close> where
     \<open>nest_left_expr E = helper_nest_left_expr (nest_left_subexpr E) \<close> |
     \<open>helper_nest_left_expr \<langle>a\<rangle> = \<langle>a\<rangle>\<close> |
     \<open>helper_nest_left_expr (L \<star> R) = nest_left_expr L \<star> R\<close>
+
+text \<open>Rotations don't change the list order of values.\<close>
 
 lemma nest_left_expr_list: \<open>list_expr (nest_left_expr E) = list_expr E\<close>
 proof (induction \<open>size E\<close> arbitrary: E rule: less_induct)
@@ -507,11 +686,10 @@ proof (induction \<open>size E\<close> arbitrary: E rule: less_induct)
     by (cases E rule: nest_left_subexpr.cases; simp)
 qed
 
-inductive left_nested_expr :: \<open>'a expr \<Rightarrow> bool\<close> where
-  pair: \<open>left_nested_expr (\<langle>l\<rangle> \<star> \<langle>r\<rangle>)\<close> |
-  nested: \<open>left_nested_expr L \<Longrightarrow> left_nested_expr (L \<star> R)\<close>
-
 declare left_nested_expr.intros[intro] left_nested_expr.cases[elim]
+
+text \<open>Performing these rotations results in an expression that has the wanted property of directly
+combining the leftmost value with another value.\<close>
 
 lemma left_nested_nest_left_expr:
   \<open>is_Op E \<Longrightarrow> left_nested_expr (nest_left_expr E)\<close>
@@ -520,6 +698,9 @@ proof (induction \<open>size E\<close> arbitrary: E rule: less_induct)
   then show ?case
     by (cases E rule: nest_left_subexpr.cases; auto)
 qed
+
+text \<open>If the initial expression has a minimal head, these rotations also do not increase the
+evaluation result.\<close>
 
 lemma (in huffman_algebra) value_nest_left_expr:
   \<open>\<lbrakk>Min_hd_expr E\<rbrakk> \<Longrightarrow> value_expr (nest_left_expr E) \<le> value_expr E\<close>
@@ -556,23 +737,19 @@ proof (induction \<open>size E\<close> arbitrary: E rule: less_induct)
   qed
 qed
 
-(***)
-
-lemma Min_hd_expr_sorted_1:
-  \<open>Min_hd_expr E \<Longrightarrow> hd_expr E = hd (sorted_list_of_multiset (mset_expr E))\<close>
-  by (metis Min_expr_from_mset hd_sorted_list_of_multiset length_0_conv list_expr_nonempty
-      mset.simps(1) size_mset)
-
-lemma Min_hd_expr_sorted_2:
-  assumes \<open>is_Op E\<close> \<open>Min_hd_expr E\<close> \<open>tl_Min_hd_expr E\<close>
-  shows \<open>hd_expr (tl_expr E) = hd (tl (sorted_list_of_multiset (mset_expr E)))\<close>
-  by (metis Min_expr_from_mset Min_hd_expr_sorted_1 assms list_expr_nonempty
-      list_tl_expr mset_tl mset_zero_iff tl_sorted_list_of_multiset)
 
 (***)
+
+text \<open>We now combine our three rearrangement steps: first we swap left and right subexpressions
+whenever the right subexpression contains a smaller value, then we rearrange subexpressions to move
+the second smallest value to the second position from the left and finally we perform tree rotations
+to pair up the two smallest values.\<close>
 
 definition rearrange_expr :: \<open>'a::linorder expr \<Rightarrow> 'a expr\<close> where
    \<open>rearrange_expr E = nest_left_expr (tl_Min_to_hd_expr (Min_to_hd_expr E))\<close>
+
+text \<open>As intended, the result has the same multiset of values, still has a minimal head and a tail
+with minimal head and does have the two leftmost values in the leftmost nonsingleton subexpression.\<close>
 
 lemma rearrange_expr_mset: \<open>mset_expr (rearrange_expr E) = mset_expr E\<close>
   by (metis Min_to_hd_expr_mset nest_left_expr_list rearrange_expr_def tl_Min_to_hd_expr_mset)
@@ -598,12 +775,35 @@ proof -
     using left_nested_nest_left_expr by blast
 qed
 
+text \<open>All this combined also does not increase the evaluation result.\<close>
+
 lemma (in huffman_algebra) value_rearrange_expr:
   \<open>value_expr (rearrange_expr E) \<le> value_expr E\<close>
   unfolding rearrange_expr_def
   by (metis (mono_tags, lifting) Min_to_hd_expr_spec all_subexpr_top order_trans
       tl_Min_to_hd_expr_Min tl_Min_to_hd_expr_hd value_Min_to_hd_expr value_nest_left_expr
       value_tl_Min_to_hd_expr)
+
+(***)
+
+text \<open>For an expression with a minimal head, the head value is the head of the sorted list of its
+values.\<close>
+
+lemma Min_hd_expr_sorted_1:
+  \<open>Min_hd_expr E \<Longrightarrow> hd_expr E = hd (sorted_list_of_multiset (mset_expr E))\<close>
+  by (metis Min_expr_from_mset hd_sorted_list_of_multiset length_0_conv list_expr_nonempty
+      mset.simps(1) size_mset)
+
+text \<open>For an expression with a minimal head and a tail with minimal head, the head value of its
+tail is the second value in the sorted list of its values.\<close>
+
+lemma Min_hd_expr_sorted_2:
+  assumes \<open>is_Op E\<close> \<open>Min_hd_expr E\<close> \<open>tl_Min_hd_expr E\<close>
+  shows \<open>hd_expr (tl_expr E) = hd (tl (sorted_list_of_multiset (mset_expr E)))\<close>
+  by (metis Min_expr_from_mset Min_hd_expr_sorted_1 assms list_expr_nonempty
+      list_tl_expr mset_tl mset_zero_iff tl_sorted_list_of_multiset)
+
+(** TODO continue here **)
 
 lemma hd_list_rearrange_expr:
   \<open>hd (list_expr (rearrange_expr E)) = hd (sorted_list_of_multiset (mset_expr E))\<close>

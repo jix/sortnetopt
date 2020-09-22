@@ -2,6 +2,9 @@ theory Sorting_Network
   imports Main Sorting_Network_Bound "HOL-Library.Permutations" "HOL-Library.Multiset" "Huffman"
 begin
 
+text \<open>Minimum and maximum on Booleans are just conjunction and disjunction, which are often easier
+to work with.\<close>
+
 lemma bool_min_is_conj[simp]: \<open>min a b = (a \<and> b)\<close>
   unfolding min_def by auto
 
@@ -9,34 +12,38 @@ lemma bool_max_is_disj[simp]: \<open>max a b = (a \<or> b)\<close>
   unfolding max_def by auto
 
 lemma apply_cmp_logic:
-  \<open>apply_cmp c v i = (v i \<and> (i \<noteq> fst c \<or> v (snd c)) \<or> (i = snd c \<and> v (fst c)))\<close>
+  \<open>apply_cmp c x i = (x i \<and> (i \<noteq> fst c \<or> x (snd c)) \<or> (i = snd c \<and> x (fst c)))\<close>
   unfolding apply_cmp_def Let_def case_prod_unfold
   by auto
 
-lemma apply_cmp_swap_or_id:
-  \<open>apply_cmp c v = v \<or> apply_cmp c v = Fun.swap (fst c) (snd c) v\<close>
-proof (cases \<open>v (fst c) \<and> \<not>v (snd c)\<close>)
+text \<open>Applying a comparator to a given sequence is either an exchange or the identity.\<close>
+
+lemma apply_cmp_exch_or_id:
+  \<open>apply_cmp c x = x \<or> apply_cmp c x = Fun.swap (fst c) (snd c) x\<close>
+proof (cases \<open>x (fst c) \<and> \<not>x (snd c)\<close>)
   case True
-  hence \<open>apply_cmp c v = Fun.swap (fst c) (snd c) v\<close>
+  hence \<open>apply_cmp c x = Fun.swap (fst c) (snd c) x\<close>
     by (simp add: apply_cmp_def case_prod_beta' swap_def)
   thus ?thesis..
 next
   case False
-  hence \<open>apply_cmp c v = v\<close>
+  hence \<open>apply_cmp c x = x\<close>
     unfolding apply_cmp_logic
     by blast
   thus ?thesis..
 qed
 
+text \<open>A comparator $(i, i)$ is always the identity.\<close>
+
 lemma apply_cmp_same_channels:
-  \<open>fst c = snd c \<Longrightarrow> apply_cmp c v = v\<close>
-  using apply_cmp_swap_or_id by fastforce
+  \<open>fst c = snd c \<Longrightarrow> apply_cmp c x = x\<close>
+  using apply_cmp_exch_or_id by fastforce
 
 lemma apply_cmp_fixed_width_snd_oob:
-  assumes \<open>fixed_width_vect n v\<close> \<open>snd c \<ge> n\<close>
+  assumes \<open>fixed_len_bseq n v\<close> \<open>snd c \<ge> n\<close>
   shows \<open>apply_cmp c v = v\<close>
   using assms
-  unfolding fixed_width_vect_def apply_cmp_logic
+  unfolding fixed_len_bseq_def apply_cmp_logic
 proof (intro impI ext)
   fix i
   assume fixed_width: \<open>\<forall>i\<ge>n. v i = True\<close>
@@ -55,7 +62,7 @@ qed
 
 (***)
 
-definition weight :: \<open>vect \<Rightarrow> nat\<close> where
+definition weight :: \<open>bseq \<Rightarrow> nat\<close> where
   \<open>weight v = card (v -` {False})\<close>
 
 lemma \<open>weight (apply_cmp c v) = weight v\<close>
@@ -66,7 +73,7 @@ proof (cases \<open>apply_cmp c v = v\<close>)
 next
   case False
   hence \<open>apply_cmp c v = Fun.swap (fst c) (snd c) v\<close>
-    using apply_cmp_swap_or_id by blast
+    using apply_cmp_exch_or_id by blast
   hence \<open>apply_cmp c v = v \<circ> Fun.swap (fst c) (snd c) id\<close>
     by (simp add: comp_swap)
   hence \<open>apply_cmp c v -` {False} = (v \<circ> Fun.swap (fst c) (snd c) id) -` {False}\<close>
@@ -78,16 +85,16 @@ next
 qed
 
 lemma fixed_width_false_set:
-  \<open>fixed_width_vect n v \<Longrightarrow> (v -` {False}) \<subseteq> {..<n}\<close>
-  unfolding fixed_width_vect_def
+  \<open>fixed_len_bseq n v \<Longrightarrow> (v -` {False}) \<subseteq> {..<n}\<close>
+  unfolding fixed_len_bseq_def
   using leI by blast
 
 lemma fixed_width_weight_bound:
-  \<open>fixed_width_vect n v \<Longrightarrow> weight v \<le> n\<close>
+  \<open>fixed_len_bseq n v \<Longrightarrow> weight v \<le> n\<close>
   by (metis fixed_width_false_set card_lessThan weight_def card_mono finite_lessThan)
 
 lemma fixed_width_mono_at_weight:
-  assumes \<open>fixed_width_vect n v\<close> \<open>mono v\<close> \<open>i = weight v\<close>
+  assumes \<open>fixed_len_bseq n v\<close> \<open>mono v\<close> \<open>i = weight v\<close>
   shows \<open>v i = True\<close>
 proof (rule ccontr)
   assume \<open>v i \<noteq> True\<close>
@@ -101,7 +108,7 @@ proof (rule ccontr)
 qed
 
 lemma fixed_width_mono_from_weight:
-  assumes \<open>fixed_width_vect n v\<close> \<open>mono v\<close>
+  assumes \<open>fixed_len_bseq n v\<close> \<open>mono v\<close>
   shows \<open>v i = (i \<ge> weight v)\<close>
 proof (cases \<open>i \<ge> weight v\<close>)
   case True
@@ -110,11 +117,11 @@ proof (cases \<open>i \<ge> weight v\<close>)
 next
   case False
   thus ?thesis
-    by (metis (full_types) assms(2) fixed_width_vect_def fixed_width_weight_bound le_boolD monoD)
+    by (metis (full_types) assms(2) fixed_len_bseq_def fixed_width_weight_bound le_boolD monoD)
 qed
 
 lemma weight_inj_on_fixed_width_mono:
-  assumes \<open>\<And>v. v \<in> V \<Longrightarrow> mono v \<and> fixed_width_vect n v\<close>
+  assumes \<open>\<And>v. v \<in> V \<Longrightarrow> mono v \<and> fixed_len_bseq n v\<close>
   shows \<open>inj_on weight V\<close>
 proof (intro inj_onI ext)
   fix v w i assume vw: \<open>v \<in> V\<close> \<open>w \<in> V\<close> \<open>weight v = weight w\<close>
@@ -123,19 +130,19 @@ proof (intro inj_onI ext)
 qed
 
 lemma apply_cmp_fixed_width:
-  assumes \<open>fixed_width_vect n v\<close>
-  shows \<open>fixed_width_vect (Suc (max n (max (fst c) (snd c)))) (apply_cmp c v)\<close>
+  assumes \<open>fixed_len_bseq n v\<close>
+  shows \<open>fixed_len_bseq (Suc (max n (max (fst c) (snd c)))) (apply_cmp c v)\<close>
   unfolding apply_cmp_logic
-  using assms fixed_width_vect_def by auto
+  using assms fixed_len_bseq_def by auto
 
 lemma apply_cmp_fixed_width_in_bounds:
-  assumes \<open>fixed_width_vect n v\<close> \<open>fst c < n\<close> \<open>snd c < n\<close>
-  shows \<open>fixed_width_vect n (apply_cmp c v)\<close>
+  assumes \<open>fixed_len_bseq n v\<close> \<open>fst c < n\<close> \<open>snd c < n\<close>
+  shows \<open>fixed_len_bseq n (apply_cmp c v)\<close>
   unfolding apply_cmp_logic
-  using assms fixed_width_vect_def by auto
+  using assms fixed_len_bseq_def by auto
 
 lemma apply_cn_fixed_width:
-  \<open>fixed_width_vect n v \<Longrightarrow> \<exists>n'. fixed_width_vect n' (fold apply_cmp cn v)\<close>
+  \<open>fixed_len_bseq n v \<Longrightarrow> \<exists>n'. fixed_len_bseq n' (fold apply_cmp cn v)\<close>
 proof (induction cn arbitrary: n v)
   case Nil
   thus ?case
@@ -157,13 +164,13 @@ qed
 
 (***)
 
-definition pls_bound :: \<open>vect set \<Rightarrow> nat \<Rightarrow> bool\<close> where
+definition pls_bound :: \<open>bseq set \<Rightarrow> nat \<Rightarrow> bool\<close> where
   \<open>pls_bound V b = (\<forall>cn. inj_on weight (fold apply_cmp cn ` V)  \<longrightarrow> length cn \<ge> b)\<close>
 
 lemma pls_bound_implies_lower_size_bound:
-  assumes \<open>\<And>v. v \<in> V \<Longrightarrow> fixed_width_vect n v\<close> \<open>pls_bound V b\<close>
-  shows \<open>lower_size_bound V b\<close>
-  unfolding lower_size_bound_def
+  assumes \<open>\<And>v. v \<in> V \<Longrightarrow> fixed_len_bseq n v\<close> \<open>pls_bound V b\<close>
+  shows \<open>partial_lower_size_bound V b\<close>
+  unfolding partial_lower_size_bound_def
 proof (intro allI impI)
   fix cn assume cn_sorts: \<open>\<forall>v \<in> V. mono (fold apply_cmp cn v)\<close>
 
@@ -175,9 +182,9 @@ proof (intro allI impI)
     hence \<open>mono v \<and> mono w\<close>
       using cn_sorts by auto
 
-    moreover obtain n_v where \<open>fixed_width_vect n_v v\<close> 
+    moreover obtain n_v where \<open>fixed_len_bseq n_v v\<close> 
       by (metis v_asm apply_cn_fixed_width assms(1) imageE)
-    moreover obtain n_w where \<open>fixed_width_vect n_w w\<close> 
+    moreover obtain n_w where \<open>fixed_len_bseq n_w w\<close> 
       by (metis w_asm apply_cn_fixed_width assms(1) imageE)
     ultimately have \<open>\<And>i. v i = (i \<ge> weight v)\<close> \<open>\<And>i. w i = (i \<ge> weight w)\<close>
       using fixed_width_mono_from_weight
@@ -240,7 +247,7 @@ lemma bound_weaken:
 (***)
 
 lemma unsorted_by_card_bound:
-  assumes \<open>\<And>v. v \<in> V \<Longrightarrow> fixed_width_vect n v\<close> \<open>card V > n + 1\<close>
+  assumes \<open>\<And>v. v \<in> V \<Longrightarrow> fixed_len_bseq n v\<close> \<open>card V > n + 1\<close>
   shows \<open>pls_bound V 1\<close>
 proof(rule unsorted_bound; rule)
   assume \<open>inj_on weight V\<close>
@@ -263,7 +270,7 @@ lemma inj_on_invariant_bij_image:
 
 (***)
 
-definition apply_perm :: \<open>(nat \<Rightarrow> nat) \<Rightarrow> vect \<Rightarrow> vect\<close> where
+definition apply_perm :: \<open>(nat \<Rightarrow> nat) \<Rightarrow> bseq \<Rightarrow> bseq\<close> where
   \<open>apply_perm p v i = v (p i)\<close>
 
 
@@ -378,14 +385,14 @@ proof
 qed
 
 lemma apply_perm_fixed_width:
-  assumes \<open>p permutes {..<n}\<close> \<open>fixed_width_vect n v\<close>
-  shows \<open>fixed_width_vect n (apply_perm p v)\<close>
-  using assms unfolding fixed_width_vect_def apply_perm_def permutes_def
+  assumes \<open>p permutes {..<n}\<close> \<open>fixed_len_bseq n v\<close>
+  shows \<open>fixed_len_bseq n (apply_perm p v)\<close>
+  using assms unfolding fixed_len_bseq_def apply_perm_def permutes_def
   by simp
 
 lemma apply_perm_fixed_width_image:
-  assumes \<open>p permutes {..<n}\<close> \<open>\<And>v. v \<in> V \<Longrightarrow> fixed_width_vect n v\<close>
-  shows \<open>\<And>v. v \<in> apply_perm p ` V \<Longrightarrow> fixed_width_vect n v\<close>
+  assumes \<open>p permutes {..<n}\<close> \<open>\<And>v. v \<in> V \<Longrightarrow> fixed_len_bseq n v\<close>
+  shows \<open>\<And>v. v \<in> apply_perm p ` V \<Longrightarrow> fixed_len_bseq n v\<close>
   using apply_perm_fixed_width assms by blast
 
 (***)
@@ -427,7 +434,7 @@ qed
 
 lemma ocmp_suc_bound:
   assumes unsorted: \<open>\<not>inj_on weight V\<close>
-    and fixed_width: \<open>\<And>v. v \<in> V \<Longrightarrow> fixed_width_vect n v\<close>
+    and fixed_width: \<open>\<And>v. v \<in> V \<Longrightarrow> fixed_len_bseq n v\<close>
     and suc_bounds:
       \<open>\<And>c. fst c < snd c \<and> snd c < n \<Longrightarrow>
         pls_bound (apply_cmp c ` V) b \<or> pls_bound (apply_cmp c ` V) = pls_bound V\<close>
@@ -475,7 +482,7 @@ qed
 
 (***)
 
-definition redundant_cmp :: \<open>cmp \<Rightarrow> vect set \<Rightarrow> bool\<close> where
+definition redundant_cmp :: \<open>cmp \<Rightarrow> bseq set \<Rightarrow> bool\<close> where
   \<open>redundant_cmp c V = (\<not>((\<exists>v \<in> V. v (fst c) \<and> \<not>v (snd c)) \<and> (\<exists>v \<in> V. \<not>v (fst c) \<and> v (snd c))))\<close>
 
 lemma redundant_cmp_id:
@@ -529,7 +536,7 @@ lemma redundant_cmp_bound:
 
 (***)
 
-definition invert_vect :: \<open>nat \<Rightarrow> vect \<Rightarrow> vect\<close> where
+definition invert_vect :: \<open>nat \<Rightarrow> bseq \<Rightarrow> bseq\<close> where
   \<open>invert_vect n v i = (v i \<noteq> (i < n))\<close>
 
 lemma invert_vect_invol: \<open>invert_vect n \<circ> invert_vect n = id\<close>
@@ -539,12 +546,12 @@ lemma invert_vect_bij: \<open>bij (invert_vect n)\<close>
   using invert_vect_invol o_bij by blast
 
 lemma invert_vect_fixed_width:
-  assumes \<open>fixed_width_vect n v\<close>
-  shows \<open>fixed_width_vect n (invert_vect n v)\<close>
-  using assms fixed_width_vect_def invert_vect_def by auto
+  assumes \<open>fixed_len_bseq n v\<close>
+  shows \<open>fixed_len_bseq n (invert_vect n v)\<close>
+  using assms fixed_len_bseq_def invert_vect_def by auto
 
 lemma invert_false_set:
-  assumes \<open>fixed_width_vect n v\<close>
+  assumes \<open>fixed_len_bseq n v\<close>
   shows \<open>invert_vect n v -` {False} = {..<n} - (v -` {False})\<close>
 proof (rule set_eqI)
   fix i
@@ -553,7 +560,7 @@ proof (rule set_eqI)
   also have \<open>\<dots> = (i < n \<and> v i)\<close>
     by simp
   also have \<open>\<dots> = (v i = (i < n))\<close>
-    using assms fixed_width_vect_def by auto
+    using assms fixed_len_bseq_def by auto
   also have \<open>\<dots> = (\<not>invert_vect n v i)\<close>
     by (simp add: invert_vect_def)
   also have \<open>\<dots> = (i \<in> invert_vect n v -` {False})\<close>
@@ -563,7 +570,7 @@ proof (rule set_eqI)
 qed
 
 lemma invert_vect_weight:
-  assumes \<open>fixed_width_vect n v\<close>
+  assumes \<open>fixed_len_bseq n v\<close>
   shows \<open>weight (invert_vect n v) = n - weight v\<close>
   unfolding weight_def
   by (metis assms card_Diff_subset card_lessThan finite_lessThan finite_subset
@@ -605,7 +612,7 @@ lemma invert_vect_cmp_comp:
   by (rule ext; insert assms; simp add: invert_vect_cmp)
 
 lemma inverted_bound:
-  assumes \<open>\<And>v. v \<in> V \<Longrightarrow> fixed_width_vect n v\<close> \<open>pls_bound V b\<close>
+  assumes \<open>\<And>v. v \<in> V \<Longrightarrow> fixed_len_bseq n v\<close> \<open>pls_bound V b\<close>
   shows \<open>pls_bound (invert_vect n ` V) b\<close>
   using assms
 proof (induction b arbitrary: n V)
@@ -628,7 +635,7 @@ next
           invert_vect_bij invert_vect_weight plus_1_eq_Suc subset_UNIV)
   next 
     fix v
-    show \<open>v \<in> invert_vect n ` V \<Longrightarrow> fixed_width_vect n v\<close>
+    show \<open>v \<in> invert_vect n ` V \<Longrightarrow> fixed_len_bseq n v\<close>
       using Suc.prems(1) invert_vect_fixed_width by auto
   next
     fix c assume \<open>fst c < snd c \<and> snd c < n\<close>
@@ -650,7 +657,7 @@ qed
 
 (***)
 
-definition pruned_bound :: \<open>vect set \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> bool\<close> where
+definition pruned_bound :: \<open>bseq set \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> bool\<close> where
   \<open>pruned_bound V i b = (((\<noteq>) i) \<in> V \<and> pls_bound {v \<in> V. \<not>v i} b)\<close>
 
 lemma pls_bound_from_pruned_bound:
@@ -765,7 +772,7 @@ qed
 
 (***)
 
-definition pruned_bounds :: \<open>vect set \<Rightarrow> (nat \<rightharpoonup> nat) \<Rightarrow> bool\<close> where
+definition pruned_bounds :: \<open>bseq set \<Rightarrow> (nat \<rightharpoonup> nat) \<Rightarrow> bool\<close> where
   \<open>pruned_bounds V B = (\<forall>i \<in> dom B. pruned_bound V i (the (B i)))\<close>
 
 definition combine_bounds :: \<open>nat option \<Rightarrow> nat option \<Rightarrow> nat option\<close> where
@@ -1297,20 +1304,20 @@ lemma pls_bound_from_pruned_bounds:
 
 (***)
 
-abbreviation apply_pol :: \<open>nat \<Rightarrow> bool \<Rightarrow> vect \<Rightarrow> vect\<close> where
+abbreviation apply_pol :: \<open>nat \<Rightarrow> bool \<Rightarrow> bseq \<Rightarrow> bseq\<close> where
   \<open>apply_pol n pol v \<equiv> (if pol then v else invert_vect n v)\<close>
 
 lemma apply_pol_invol: \<open>apply_pol n pol (apply_pol n pol v) = v\<close>
   by (cases pol; simp add: invert_vect_invol pointfree_idE)
 
-definition pruned_bound_pol :: \<open>nat \<Rightarrow> bool \<Rightarrow> vect set \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> bool\<close> where
+definition pruned_bound_pol :: \<open>nat \<Rightarrow> bool \<Rightarrow> bseq set \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> bool\<close> where
   \<open>pruned_bound_pol n pol V i b = pruned_bound (apply_pol n pol ` V) i b\<close>
 
-definition pruned_bounds_pol :: \<open>nat \<Rightarrow> bool \<Rightarrow> vect set \<Rightarrow> (nat \<rightharpoonup> nat) \<Rightarrow> bool\<close> where
+definition pruned_bounds_pol :: \<open>nat \<Rightarrow> bool \<Rightarrow> bseq set \<Rightarrow> (nat \<rightharpoonup> nat) \<Rightarrow> bool\<close> where
   \<open>pruned_bounds_pol n pol V B = (\<forall>i \<in> dom B. pruned_bound_pol n pol V i (the (B i)))\<close>
 
 lemma pls_bound_from_pruned_bounds_pol:
-  assumes \<open>\<And>v. v \<in> V \<Longrightarrow> fixed_width_vect n v\<close>
+  assumes \<open>\<And>v. v \<in> V \<Longrightarrow> fixed_len_bseq n v\<close>
     \<open>pruned_bounds_pol n pol V B\<close> \<open>finite (dom B)\<close> \<open>dom B \<noteq> {}\<close>
   shows \<open>pls_bound V (sucmax.value_bound_mset (mset_ran B))\<close>
 proof (cases pol)
@@ -1336,13 +1343,13 @@ next
 qed
 
 lemma apply_pol_bound:
-  assumes \<open>\<And>v. v \<in> V \<Longrightarrow> fixed_width_vect n v\<close> \<open>pls_bound V b\<close>
+  assumes \<open>\<And>v. v \<in> V \<Longrightarrow> fixed_len_bseq n v\<close> \<open>pls_bound V b\<close>
   shows \<open>pls_bound (apply_pol n pol ` V) b\<close>
   using assms
   by (cases pol; simp add: inverted_bound)
 
 lemma apply_pol_bound_iff:
-  assumes \<open>\<And>v. v \<in> V \<Longrightarrow> fixed_width_vect n v\<close>
+  assumes \<open>\<And>v. v \<in> V \<Longrightarrow> fixed_len_bseq n v\<close>
   shows \<open>pls_bound (apply_pol n pol ` V) b = pls_bound V b\<close>
 proof
   assume \<open>pls_bound (apply_pol n pol ` V) b\<close>

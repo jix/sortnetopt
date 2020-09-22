@@ -211,7 +211,7 @@ qed
 
 (***)
 
-fun list_to_vect :: \<open>bool list \<Rightarrow> vect\<close> where
+fun list_to_vect :: \<open>bool list \<Rightarrow> bseq\<close> where
   \<open>list_to_vect [] i = True\<close> |
   \<open>list_to_vect (x # xs) 0 = x\<close> |
   \<open>list_to_vect (x # xs) (Suc i) = list_to_vect xs i\<close>
@@ -269,9 +269,9 @@ qed
 definition is_unsorted_vt :: \<open>nat \<Rightarrow> vect_trie \<Rightarrow> bool\<close> where
   \<open>is_unsorted_vt n A = (length_vt A > Suc n)\<close>
 
-lemma fixed_width_vect_list_to_vect:
-  \<open>length xs = n \<Longrightarrow> fixed_width_vect n (list_to_vect xs)\<close>
-  unfolding fixed_width_vect_def list_to_vect_as_nth
+lemma fixed_len_bseq_list_to_vect:
+  \<open>length xs = n \<Longrightarrow> fixed_len_bseq n (list_to_vect xs)\<close>
+  unfolding fixed_len_bseq_def list_to_vect_as_nth
   by simp
 
 lemma is_unsorted_vt_bound:
@@ -279,8 +279,8 @@ lemma is_unsorted_vt_bound:
   shows \<open>pls_bound (list_to_vect ` set_vt A) 1\<close>
 proof (rule unsorted_by_card_bound)
   fix v assume \<open>v \<in> list_to_vect ` set_vt A\<close>
-  thus \<open>fixed_width_vect n v\<close>
-    using assms fixed_width_vect_list_to_vect
+  thus \<open>fixed_len_bseq n v\<close>
+    using assms fixed_len_bseq_list_to_vect
     by blast 
 next
   show \<open>n + 1 < card (list_to_vect ` set_vt A)\<close>
@@ -404,8 +404,8 @@ definition invert_vt :: \<open>bool \<Rightarrow> vect_trie \<Rightarrow> vect_t
 
 lemma list_to_vect_set_vt_fixed_width:
   assumes \<open>set_vt A \<subseteq> {xs. length xs = n}\<close>
-  shows \<open>list_to_vect ` set_vt A \<subseteq> {v. fixed_width_vect n v}\<close>
-  by (metis (mono_tags, lifting) Ball_Collect assms fixed_width_vect_list_to_vect image_subsetI
+  shows \<open>list_to_vect ` set_vt A \<subseteq> {v. fixed_len_bseq n v}\<close>
+  by (metis (mono_tags, lifting) Ball_Collect assms fixed_len_bseq_list_to_vect image_subsetI
       mem_Collect_eq)
 
 lemma invert_vt_bound:
@@ -731,7 +731,7 @@ proof -
     show \<open>\<not>inj_on weight (list_to_vect ` set_vt A)\<close>
       using is_unsorted bound_unsorted by blast
   next
-    show \<open>\<And>v. v \<in> list_to_vect ` set_vt A \<Longrightarrow> fixed_width_vect width v\<close>
+    show \<open>\<And>v. v \<in> list_to_vect ` set_vt A \<Longrightarrow> fixed_len_bseq width v\<close>
       by (metis (full_types) A_lengths Ball_Collect list_to_vect_set_vt_fixed_width)
   next
     show  \<open>\<And>c. fst c < snd c \<and> snd c < width \<Longrightarrow>
@@ -787,7 +787,7 @@ lemma remove_nth_as_take_drop:
   \<open>remove_nth i xs = take i xs @ drop (Suc i) xs\<close>
   by (induction i xs rule: remove_nth.induct; simp)
 
-definition prune_nth :: \<open>nat \<Rightarrow> vect \<Rightarrow> vect\<close> where
+definition prune_nth :: \<open>nat \<Rightarrow> bseq \<Rightarrow> bseq\<close> where
   \<open>prune_nth n v i = (if i \<ge> n then v (Suc i) else v i)\<close>
 
 lemma list_to_vect_remove_nth:
@@ -999,10 +999,10 @@ lemma shift_channels_permutes:
       unshift_shift_inverse)
 
 lemma prune_nth_as_perm:
-  assumes \<open>fixed_width_vect n v\<close> \<open>v i\<close> \<open>i < n\<close>
+  assumes \<open>fixed_len_bseq n v\<close> \<open>v i\<close> \<open>i < n\<close>
   shows \<open>prune_nth i v = apply_perm (shift_channels n i) v\<close>
   unfolding prune_nth_def shift_channels_def apply_perm_def
-  using assms fixed_width_vect_def by auto
+  using assms fixed_len_bseq_def by auto
 
 lemma inverted_prune_nth: 
   assumes \<open>i < Suc n\<close>
@@ -1011,11 +1011,11 @@ lemma inverted_prune_nth:
   using assms by auto
 
 lemma prune_nth_as_perm_inverted:
-  assumes \<open>fixed_width_vect n v\<close> \<open>\<not>v i\<close> \<open>i < n\<close>
+  assumes \<open>fixed_len_bseq n v\<close> \<open>\<not>v i\<close> \<open>i < n\<close>
   shows
     \<open>prune_nth i v = invert_vect (nat.pred n) (apply_perm (shift_channels n i) (invert_vect n v))\<close>
 proof -
-  have \<open>fixed_width_vect n (invert_vect n v)\<close>
+  have \<open>fixed_len_bseq n (invert_vect n v)\<close>
     by (simp add: assms(1) invert_vect_fixed_width)
   moreover have \<open>(invert_vect n v) i\<close>
     by (simp add: assms(2) assms(3) invert_vect_def)
@@ -1030,7 +1030,7 @@ proof -
 qed
 
 lemma prune_nth_as_perm_pol_image:
-  assumes \<open>\<And>v. v \<in> V \<Longrightarrow> fixed_width_vect n v\<close> \<open>\<And>v. v \<in> V \<Longrightarrow> v i = pol\<close> \<open>i < n\<close>
+  assumes \<open>\<And>v. v \<in> V \<Longrightarrow> fixed_len_bseq n v\<close> \<open>\<And>v. v \<in> V \<Longrightarrow> v i = pol\<close> \<open>i < n\<close>
   shows
     \<open>prune_nth i ` V = apply_pol (nat.pred n) pol `
       apply_perm (shift_channels n i) ` apply_pol n pol ` V\<close>
@@ -1047,19 +1047,19 @@ proof -
   obtain n' where n': \<open>n = Suc n'\<close>
     using assms less_imp_Suc_add by blast 
 
-  have f1: \<open>\<And>v. v \<in> list_to_vect ` {xs \<in> set_vt A. xs ! i \<noteq> pol} \<Longrightarrow> fixed_width_vect n v\<close>
+  have f1: \<open>\<And>v. v \<in> list_to_vect ` {xs \<in> set_vt A. xs ! i \<noteq> pol} \<Longrightarrow> fixed_len_bseq n v\<close>
     by (metis (mono_tags) Collect_subset assms(3) image_mono in_mono
         list_to_vect_set_vt_fixed_width mem_Collect_eq)
 
   hence \<open>\<And>v.
     v \<in> apply_pol n (\<not> pol) ` list_to_vect ` {xs \<in> set_vt A. xs ! i \<noteq> pol}
-    \<Longrightarrow> fixed_width_vect n v\<close>
+    \<Longrightarrow> fixed_len_bseq n v\<close>
     using invert_vect_fixed_width by auto
 
   hence \<open>\<And>v.
     v \<in> apply_perm (shift_channels n i) ` apply_pol n (\<not> pol) `
       list_to_vect ` {xs \<in> set_vt A. xs ! i \<noteq> pol}
-    \<Longrightarrow> fixed_width_vect n v\<close>
+    \<Longrightarrow> fixed_len_bseq n v\<close>
     by (meson apply_perm_fixed_width_image assms(2) shift_channels_permutes)
 
   moreover have \<open>\<And>v. v \<in> set_vt A \<and> v ! i \<noteq> pol \<Longrightarrow>
@@ -1077,8 +1077,8 @@ proof -
   ultimately have f2: \<open>\<And>v.
     v \<in> apply_perm (shift_channels n i) ` apply_pol n (\<not> pol) `
       list_to_vect ` {xs \<in> set_vt A. xs ! i \<noteq> pol}
-    \<Longrightarrow> fixed_width_vect n' v\<close>
-    unfolding n' fixed_width_vect_def
+    \<Longrightarrow> fixed_len_bseq n' v\<close>
+    unfolding n' fixed_len_bseq_def
     by (metis (no_types, lifting) Suc_leI le_imp_less_or_eq)
 
 
@@ -1095,7 +1095,7 @@ proof -
       apply_pol n (\<not>pol) `
       list_to_vect ` {xs \<in> set_vt A. xs ! i \<noteq> pol}) b\<close>
     by (subst (asm) prune_nth_as_perm_pol_image[where n=n and pol=\<open>\<not>pol\<close>];
-        insert assms(2, 3) fixed_width_vect_list_to_vect list_to_vect_as_nth; auto simp add: n')
+        insert assms(2, 3) fixed_len_bseq_list_to_vect list_to_vect_as_nth; auto simp add: n')
   hence
     \<open>pls_bound (
       apply_perm (shift_channels n i) `
@@ -1223,7 +1223,7 @@ proof -
   have \<open>pls_bound (list_to_vect ` set_vt A) (sucmax.value_bound_mset (mset_ran D))\<close>
   proof (rule pls_bound_from_pruned_bounds_pol[where n=width and pol=pol and B=D])
     fix v assume v: \<open>v \<in> list_to_vect ` set_vt A\<close>
-    thus \<open>fixed_width_vect width v\<close>
+    thus \<open>fixed_len_bseq width v\<close>
       by (metis A_lengths Ball_Collect v list_to_vect_set_vt_fixed_width)
   next
     show \<open>finite (dom D)\<close>
@@ -1449,16 +1449,16 @@ definition check_proof_get_bound :: \<open>proof_cert \<Rightarrow> (int \<times
 
 lemma step_checked_bound:
   assumes \<open>step_checked step\<close>
-  shows \<open>lower_size_bound {v. fixed_width_vect (nat (step_width step)) v} (nat (step_bound step))\<close>
+  shows \<open>partial_lower_size_bound {v. fixed_len_bseq (nat (step_width step)) v} (nat (step_bound step))\<close>
 proof -
   define A where \<open>A = list_to_vect ` set_vt (vt_list (step_vect_list step))\<close>
   hence \<open>pls_bound A (nat (step_bound step))\<close>
     using assms step_checked_def by auto
-  moreover have \<open>A \<subseteq> {v. fixed_width_vect (nat (step_width step)) v}\<close>
+  moreover have \<open>A \<subseteq> {v. fixed_len_bseq (nat (step_width step)) v}\<close>
     by (metis (no_types, lifting) A_def Ball_Collect assms list.pred_set
         list_to_vect_set_vt_fixed_width set_vt_list step_checked_def)
   ultimately have
-    \<open>pls_bound {v. fixed_width_vect (nat (step_width step)) v} (nat (step_bound step))\<close>
+    \<open>pls_bound {v. fixed_len_bseq (nat (step_width step)) v} (nat (step_bound step))\<close>
     using bound_mono_subset by blast
   thus ?thesis
     by (metis (full_types) mem_Collect_eq pls_bound_implies_lower_size_bound)
@@ -1466,7 +1466,7 @@ qed
 
 lemma check_proof_get_bound_spec:
   assumes \<open>check_proof_get_bound cert = Some (width, bound)\<close>
-  shows \<open>lower_size_bound_for_width (nat width) (nat bound)\<close>
+  shows \<open>lower_size_bound (nat width) (nat bound)\<close>
 proof -
   have checked: \<open>check_proof cert \<and> cert_length cert > 0\<close>
     using assms unfolding check_proof_get_bound_def
@@ -1479,7 +1479,7 @@ proof -
 
   thus ?thesis
     by (metis Pair_inject assms check_proof_get_bound_def checked last_step_def
-        option.inject step_checked_bound lower_size_bound_for_width_def)
+        option.inject step_checked_bound lower_size_bound_def)
 qed
 
 end

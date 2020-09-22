@@ -2,44 +2,44 @@ theory Sorting_Network_Bound
   imports Main
 begin
 
-text \<open>Due to the 0-1-principle we're only concerned with Boolean vectors. While we're interested in
-sorting vectors of a given fixed width, it is advantageous to represent them as a function from the
-naturals to Boolens.\<close>
+text \<open>Due to the 0-1-principle we're only concerned with Boolean sequences. While we're interested
+in sorting vectors of a given fixed width, it is advantageous to represent them as a function from
+the naturals to Booleans.\<close>
 
-type_synonym vect = \<open>nat \<Rightarrow> bool\<close>
+type_synonym bseq = \<open>nat \<Rightarrow> bool\<close>
 
-text \<open>To represent vectors of a fixed width, we extend them with True to infinity. This way
-monotonicity of a fixed width vector corresponds to monotonicity of our representation.\<close>
+text \<open>To represent Boolean sequences of a fixed length, we extend them with True to infinity. This
+way monotonicity of a fixed length sequence corresponds to monotonicity of our representation.\<close>
 
-definition fixed_width_vect :: \<open>nat \<Rightarrow> vect \<Rightarrow> bool\<close> where
-  \<open>fixed_width_vect n v = (\<forall>i \<ge> n. v i = True)\<close>
+definition fixed_len_bseq :: \<open>nat \<Rightarrow> bseq \<Rightarrow> bool\<close> where
+  \<open>fixed_len_bseq n x = (\<forall>i \<ge> n. x i = True)\<close>
 
 text \<open>A comparator is represented as an ordered pair of channel indices. Applying a comparator to a
-vector will order the values of the two channels so that the channel corresponding to the first
+sequence will order the values of the two channels so that the channel corresponding to the first
 index receives the smaller value.\<close>
 
 type_synonym cmp = \<open>nat \<times> nat\<close>
 
-definition apply_cmp :: \<open>cmp \<Rightarrow> vect \<Rightarrow> vect\<close> where
-  \<open>apply_cmp c v = (
-    let (a, b) = c
-    in v(
-      a := min (v a) (v b),
-      b := max (v a) (v b)
+definition apply_cmp :: \<open>cmp \<Rightarrow> bseq \<Rightarrow> bseq\<close> where
+  \<open>apply_cmp c x = (
+    let (i, j) = c
+    in x(
+      i := min (x i) (x j),
+      j := max (x i) (x j)
     )
   )\<close>
 
-text \<open>A lower size bound for a sorting network on a given set of input vectors is a number of
-comparators so that any network that is able to sort every vector of the input set has at least that
-number of comparators.\<close>
+text \<open>A lower size bound for a partial sorting network on a given set of input sequences is the
+number of comparators required for any comparator network that is able to sort every sequence of the
+given set.\<close>
 
-definition lower_size_bound :: \<open>vect set \<Rightarrow> nat \<Rightarrow> bool\<close> where
-  \<open>lower_size_bound V b = (\<forall>cn. (\<forall>v \<in> V. mono (fold apply_cmp cn v)) \<longrightarrow> length cn \<ge> b)\<close>
+definition partial_lower_size_bound :: \<open>bseq set \<Rightarrow> nat \<Rightarrow> bool\<close> where
+  \<open>partial_lower_size_bound X k = (\<forall>cn. (\<forall>x \<in> X. mono (fold apply_cmp cn x)) \<longrightarrow> length cn \<ge> k)\<close>
 
-text \<open>We are interested in lower size bounds for sorting networks that sort all vectors of a given
-  width.\<close>
+text \<open>A lower size bound for a sorting network on n channels is the same as a lower size bound for a
+partial sorting network on all length n sequences.\<close>
 
-definition lower_size_bound_for_width :: \<open>nat \<Rightarrow> nat \<Rightarrow> bool\<close> where
-  \<open>lower_size_bound_for_width w b = lower_size_bound {v. fixed_width_vect w v} b\<close>
+definition lower_size_bound :: \<open>nat \<Rightarrow> nat \<Rightarrow> bool\<close> where
+  \<open>lower_size_bound n k = partial_lower_size_bound {x. fixed_len_bseq n x} k\<close>
 
 end

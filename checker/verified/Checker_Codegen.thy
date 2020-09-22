@@ -4,7 +4,7 @@ begin
 
 lemma check_proof_get_bound_spec:
   assumes \<open>check_proof_get_bound cert = Some (width, bound)\<close>
-  shows \<open>lower_size_bound_for_width (nat width) (nat bound)\<close>
+  shows \<open>lower_size_bound (nat width) (nat bound)\<close>
   using assms by (rule Checker.check_proof_get_bound_spec)
 
 definition nat_pred_code :: \<open>nat \<Rightarrow> nat\<close> where
