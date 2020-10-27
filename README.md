@@ -42,7 +42,7 @@ required.
 The formally verified checker uses the ["Haskell Tool Stack"][stack].
 
 Checking the formal proof of the verified checker and re-exporting the verified
-Haskell code requires [Isabelle2019][isabelle].
+Haskell code requires [Isabelle2019 or Isabelle2020][isabelle].
 
 Performing the search for 9 input channels (replicating the previously best
 known result) requires very little resources and is a good way to make sure
@@ -62,9 +62,10 @@ takes below 8GB and around 3 hours on my laptop.
 ## Certificates
 
 A 1.2GB compressed certificate for 11 input channels is available for download:
-[proof_cert_11.bin.zst][cert11]. It is compressed using [Zstandard][zst] and
-needs to be unpacked before it can be checked. The SHA-256 hash of the
-uncompressed certificate is
+[proof_cert_11.bin.zst][cert11]. The certificate is also archived [at zenodo
+(DOI: 10.5281/zenodo.4108365)][cert11-zenodo]. It is compressed using
+[Zstandard][zst] and needs to be unpacked before it can be checked. The SHA-256
+hash of the uncompressed certificate is
 `7fe9f5cd694714bf83da0bcab162a290eb076ad4257265507a74cea8fab85b7e`
 
 ## Formal Verification
@@ -100,6 +101,7 @@ formal proof is available in PDF form][document.pdf].
 [stack]: https:/haskellstack.org
 [isabelle]: https://isabelle.in.tum.de/
 [cert11]: https://files.jix.one/sortnetopt/proof_cert_11.bin.zst
+[cert11-zenodo]: https://doi.org/10.5281/zenodo.4108365
 [zst]: https://facebook.github.io/zstd/
 [document.pdf]: https://files.jix.one/sortnetopt/document.pdf
 [twitter]: https://twitter.com/jix_
