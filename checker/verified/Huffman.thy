@@ -83,11 +83,8 @@ datatype 'a expr =
   Val (the_Val: 'a) ("\<langle>_\<rangle>") |
   Op (left_subexpr: \<open>'a expr\<close>) (right_subexpr: \<open>'a expr\<close>) (infix "\<star>" 70)
 
-abbreviation is_Val :: \<open>'a expr \<Rightarrow> bool\<close> where
-  \<open>is_Val E \<equiv> \<exists>a. E = \<langle>a\<rangle>\<close>
-
 abbreviation is_Op :: \<open>'a expr \<Rightarrow> bool\<close> where
-  \<open>is_Op E \<equiv> \<exists>L R. E = L \<star> R\<close>
+  \<open>is_Op E \<equiv> \<not>is_Val E\<close>
 
 text \<open>The set of values in an expression is always non-empty and finite.\<close>
 
@@ -226,7 +223,7 @@ proof (cases \<open>is_Op E\<close>)
 next
   case False
   then obtain e where \<open>E = \<langle>e\<rangle>\<close>
-    using expr.exhaust_sel by blast
+    using expr.exhaust_sel by force
   hence \<open>F = E\<close>
     using expr.exhaust_sel assms(2) expr_from_list by fastforce
   then show ?thesis
@@ -370,7 +367,7 @@ lemma tl_Min_hd_expr_list_expr_cong:
   shows \<open>tl_Min_hd_expr E = tl_Min_hd_expr F\<close>
 proof -
   have \<open>\<And>E. tl (list_expr E) = list_expr (tl_expr E) \<or> \<langle>the_Val E\<rangle> = E\<close>
-    by (metis expr.exhaust_sel list_tl_expr)
+    using expr.collapse(1) list_tl_expr by fastforce
   then have \<open>list_expr (tl_expr E) = list_expr (tl_expr F)\<close>
     using assms by (metis (no_types) expr.simps(7) expr_from_list)
   then show ?thesis
@@ -806,15 +803,16 @@ lemma Min_hd_expr_sorted_2:
 (** TODO continue here **)
 
 lemma hd_list_rearrange_expr:
-  \<open>hd (list_expr (rearrange_expr E)) = hd (sorted_list_of_multiset (mset_expr E))\<close>
+  \<open>hd_expr (rearrange_expr E) = hd (sorted_list_of_multiset (mset_expr E))\<close>
   by (metis Min_expr_from_mset Min_hd_rearrange_expr hd_sorted_list_of_multiset list_expr_nonempty
       mset_zero_iff rearrange_expr_mset)
 
 lemma hd_tl_list_rearrange_expr:
   \<open>hd (tl (list_expr (rearrange_expr E))) = hd (tl (sorted_list_of_multiset (mset_expr E)))\<close>
-  by (cases E; (simp add: rearrange_expr_def; fail)?;
-      metis (mono_tags, lifting) Min_hd_expr_sorted_2 Min_hd_rearrange_expr is_Op_by_count
-      list_tl_expr rearrange_expr_mset size_mset tl_Min_hd_rearrange_expr)
+  by (cases E; (simp add: rearrange_expr_def; fail)?; simp;
+      metis (mono_tags, lifting) Min_hd_expr_sorted_2 Min_hd_rearrange_expr count_expr_Op
+      expr.simps(8) is_Op_by_count list_tl_expr mset_append mset_eq_length rearrange_expr_mset
+      tl_Min_hd_rearrange_expr)
 
 lemma take_2_from_hds:
   assumes \<open>length xs = length ys\<close> \<open>hd xs = hd ys\<close> \<open>hd (tl xs) = hd (tl ys)\<close>
