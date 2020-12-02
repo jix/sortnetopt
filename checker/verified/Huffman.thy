@@ -784,7 +784,7 @@ lemma (in huffman_algebra) value_rearrange_expr:
 (***)
 
 text \<open>For an expression with a minimal head, the head value is the head of the sorted list of its
-values.\<close>
+values, which is the minimal value.\<close>
 
 lemma Min_hd_expr_sorted_1:
   \<open>Min_hd_expr E \<Longrightarrow> hd_expr E = hd (sorted_list_of_multiset (mset_expr E))\<close>
@@ -792,7 +792,7 @@ lemma Min_hd_expr_sorted_1:
       mset.simps(1) size_mset)
 
 text \<open>For an expression with a minimal head and a tail with minimal head, the head value of its
-tail is the second value in the sorted list of its values.\<close>
+tail is the second value in the sorted list of its values, which is the second smallest value.\<close>
 
 lemma Min_hd_expr_sorted_2:
   assumes \<open>is_Op E\<close> \<open>Min_hd_expr E\<close> \<open>tl_Min_hd_expr E\<close>
@@ -800,12 +800,16 @@ lemma Min_hd_expr_sorted_2:
   by (metis Min_expr_from_mset Min_hd_expr_sorted_1 assms list_expr_nonempty
       list_tl_expr mset_tl mset_zero_iff tl_sorted_list_of_multiset)
 
-(** TODO continue here **)
+text \<open>From this we get that the head the result of rearranging an expression is the minimal value of
+the initial expression.\<close>
 
 lemma hd_list_rearrange_expr:
   \<open>hd_expr (rearrange_expr E) = hd (sorted_list_of_multiset (mset_expr E))\<close>
   by (metis Min_expr_from_mset Min_hd_rearrange_expr hd_sorted_list_of_multiset list_expr_nonempty
       mset_zero_iff rearrange_expr_mset)
+
+text \<open>We also get that the second leftmost value in the rearranged expression is the second smallest
+value of the initial expression.\<close>
 
 lemma hd_tl_list_rearrange_expr:
   \<open>hd (tl (list_expr (rearrange_expr E))) = hd (tl (sorted_list_of_multiset (mset_expr E)))\<close>
@@ -814,11 +818,17 @@ lemma hd_tl_list_rearrange_expr:
       expr.simps(8) is_Op_by_count list_tl_expr mset_append mset_eq_length rearrange_expr_mset
       tl_Min_hd_rearrange_expr)
 
+text \<open>If two lists have the same length and they match on their first two entries, the have the same
+length-2 prefix.\<close>
+
 lemma take_2_from_hds:
   assumes \<open>length xs = length ys\<close> \<open>hd xs = hd ys\<close> \<open>hd (tl xs) = hd (tl ys)\<close>
   shows \<open>take 2 xs = take 2 ys\<close>
   using assms
   by (cases xs; simp; cases ys; simp; cases \<open>tl xs\<close>; simp; cases \<open>tl ys\<close>; simp)
+
+text \<open>This allows us to state that the leftmost two values of a rearranged expression are the two
+smallest values.\<close>
 
 lemma take_2_list_rearrange_expr:
   \<open>take 2 (list_expr (rearrange_expr E)) = take 2 (sorted_list_of_multiset (mset_expr E))\<close>
@@ -827,6 +837,9 @@ lemma take_2_list_rearrange_expr:
 
 
 (***)
+
+text \<open>We want to replace the subexpression of the two smallest values. For this we first inductively
+define what it means for an expression to have a subexpression.\<close>
 
 inductive has_subexpr :: \<open>'a expr \<Rightarrow> 'a expr \<Rightarrow> bool\<close> where
   here: \<open>has_subexpr X X\<close> |
@@ -839,11 +852,20 @@ lemma has_subexpr_simp_Op:
   \<open>has_subexpr E (L \<star> R) = (E = L \<star> R \<or> has_subexpr E L \<or> has_subexpr E R)\<close>
   by blast
 
+text \<open>Any value present in an expression corresponds to a present subexpression consisting of just
+that value.\<close>
+
 lemma has_subexpr_Val: \<open>a \<in> set_expr E = has_subexpr \<langle>a\<rangle> E\<close>
   by (induction E; auto)
 
+text \<open>The multiset of values in a subexpression is a subset of the multiset of the values of the
+whole expression.\<close>
+
 lemma mset_has_subexpr: \<open>has_subexpr X E \<Longrightarrow> mset_expr X \<subseteq># mset_expr E\<close>
   by (induction E; auto; insert subset_mset.add_increasing subset_mset.add_increasing2; fastforce)
+
+text \<open>For an expression where the two leftmost values are combined (@{term left_nested_expr}}, the
+subexpression that combines those terms is indeed a subexpression.\<close>
 
 lemma left_nested_expr_has_hd2_subexpr:
   assumes \<open>left_nested_expr E\<close> \<open>hd (list_expr E) = a1\<close> \<open>hd (tl (list_expr E)) = a2\<close>
@@ -860,6 +882,9 @@ next
         left left_nested_expr.cases list.collapse list.size(3) not_one_le_zero)
 qed
 
+text \<open>We then define a function that replaces the leftmost occurrence of a subexpression with a
+different subexpression.\<close>
+
 function replace_subexpr :: \<open>'a expr \<Rightarrow> 'a expr \<Rightarrow> 'a expr \<Rightarrow> 'a expr\<close> where
   \<open>\<not>has_subexpr X E \<Longrightarrow> replace_subexpr X Y E = E\<close> |
   \<open>X = E \<Longrightarrow> replace_subexpr X Y E = Y\<close> |
@@ -869,14 +894,23 @@ function replace_subexpr :: \<open>'a expr \<Rightarrow> 'a expr \<Rightarrow> '
   by (auto, metis has_subexpr.cases)
 termination by lexicographic_order
 
+text \<open>Doing such a replacement removes and adds the corresponding values of the replaced and
+replacement subexpressions respectively.\<close>
+
 lemma mset_replace_subexpr:
   \<open>has_subexpr X E \<Longrightarrow> mset_expr (replace_subexpr X Y E) = mset_expr E - mset_expr X + mset_expr Y\<close>
   by (induction X Y E rule: replace_subexpr.induct; auto;
       unfold has_subexpr_simp_Op; auto simp add: mset_has_subexpr)
 
+text \<open>If the evaluated value of the replaced and replacement subexpressions are the same, this does
+not change the evaluated value of the whole expression.\<close>
+
 lemma (in huffman_algebra) value_replace_subexpr:
   \<open>value_expr X = value_expr Y \<Longrightarrow> value_expr (replace_subexpr X Y E) = value_expr E\<close>
   by (induction X Y E rule: replace_subexpr.induct; auto)
+
+text \<open>Any change of the subexpressions evaluated value leads to a corresponding change of the whole
+expression's evaluated value.\<close>
 
 lemma (in huffman_algebra) value_replace_subexpr_increasing:
   \<open>value_expr X \<le> value_expr Y \<Longrightarrow> value_expr E \<le> value_expr (replace_subexpr X Y E)\<close>
@@ -889,6 +923,8 @@ lemma (in huffman_algebra) value_replace_subexpr_decreasing:
       metis commutative mono value_expr.simps(2))
 
 (***)
+
+(* TODO continue here *)
 
 lemma finite_expr_of_size:
   assumes \<open>finite U\<close>
