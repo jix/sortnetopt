@@ -14,9 +14,8 @@ This repository contains the following components:
   * A formally verified checker for the certificates generated from search
     logs, implemented using Haskell and Isabelle/HOL.
 
-I'm currently working on a document explaining the methods used. I will add a
-draft to this repository as soon as it is ready. You can also [follow me on
-twitter][twitter] for updates about this.
+For a full explanation see the [corresponding paper on arXiv][paper]. If you
+have any questions feel free to reach out to [me on Twitter][twitter].
 
 ## Usage
 
@@ -105,3 +104,4 @@ formal proof is available in PDF form][document.pdf].
 [zst]: https://facebook.github.io/zstd/
 [document.pdf]: https://files.jix.one/sortnetopt/document.pdf
 [twitter]: https://twitter.com/jix_
+[paper]: https://arxiv.org/abs/2012.04400
